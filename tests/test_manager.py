@@ -585,3 +585,83 @@ def test_mutable_bson_leaf_is_detached_before_worker_and_acknowledgement(client,
         script.script = value
         manager.wait_idle(5)
         assert script.version == 4 and collection.find_one({"_id": 1})["script"].scope == {"n": 3}
+
+
+@pytest.mark.parametrize("batch_size", [1, 3, 10**30])
+def test_automatic_scheduling_handles_thresholds_above_and_below_capacity(
+    client, monkeypatch, batch_size
+):
+    for id in range(5):
+        seed(client, id)
+    written = threading.Event()
+    original = client.tests.players.update_one
+    completed = []
+
+    def write(query, update, **kwargs):
+        result = original(query, update, **kwargs)
+        completed.append(query["_id"])
+        if len(completed) == 5:
+            written.set()
+        return result
+
+    monkeypatch.setattr(client.tests.players, "update_one", write)
+    with Manager(
+        client=client,
+        database="tests",
+        workers=1,
+        max_pending=4,
+        flush_interval=0.02,
+        batch_size=batch_size,
+    ) as manager:
+        players = [manager.get(Player, id) for id in range(5)]
+        for player in players:
+            player.coins = 1
+        assert written.wait(5)
+        assert client.tests.players.count_documents({"coins": 1}) == 5
+
+
+def test_blocked_and_delayed_documents_do_not_starve_healthy_work(client, monkeypatch):
+    for id in range(3):
+        seed(client, id)
+    healthy_written = threading.Event()
+    original = client.tests.players.update_one
+    failed = set()
+    retry_times = []
+
+    def write(query, update, **kwargs):
+        id = query["_id"]
+        if id in (0, 1) and id not in failed:
+            failed.add(id)
+            if id == 0:
+                raise ValueError("permanent failure")
+            retry_times.append(time.monotonic())
+            raise AutoReconnect("delayed retry")
+        if id == 1:
+            retry_times.append(time.monotonic())
+        result = original(query, update, **kwargs)
+        if id == 2:
+            healthy_written.set()
+        return result
+
+    monkeypatch.setattr(client.tests.players, "update_one", write)
+    with Manager(
+        client=client,
+        database="tests",
+        workers=1,
+        max_pending=1,
+        batch_size=1,
+        retry_interval=0.05,
+        on_error=lambda *_: None,
+    ) as manager:
+        players = [manager.get(Player, id) for id in range(3)]
+        try:
+            for player in players:
+                player.coins = 1
+            assert healthy_written.wait(5)
+            with pytest.raises(PersistenceError):
+                manager.wait_idle(5)
+        finally:
+            players[0].coins = 2
+        manager.wait_idle(5)
+        assert retry_times[1] - retry_times[0] >= 0.045
+        assert [client.tests.players.find_one({"_id": id})["coins"] for id in range(3)] == [2, 1, 1]

@@ -2,9 +2,21 @@
 
 本次优化保留文档根锁、单实例缓存、脏字段代次、增量操作符、版本过滤、写入确认和丢失确认后的重试。优化集中在调度唤醒、原生值处理和快照复制。
 
+## 测试环境
+
+| 项目 | 配置 |
+| --- | --- |
+| 机器 / CPU | HP Elite Tower 880 G9；Intel Core i7-14700，20 核 / 28 线程 |
+| 内存 / 数据盘 | 32 GiB DDR5；SK hynix PC801 1 TB NVMe SSD，临时 MongoDB 数据位于 C: |
+| 系统 / 解释器 | Windows 11 专业版 x64，build 26300；CPython 3.13.15，启用 GIL |
+| 数据库 / 驱动 | MongoDB 8.0.4；PyMongo 4.20.1；客户端及独立数据库进程同机，通过回环 TCP 连接 |
+| 写确认 / 统计 | `w=1`，默认 journaling；两版本交替各 5 轮，取中位数 |
+
+机器配置和驱动版本于 2026-11-23 在同机补录，原始 JSON 记录系统、Python、MongoDB 和负载。补录时电源方案为「平衡」，未记录各轮 CPU 频率、温度或后台负载。完整机器信息、参数、信息来源及计时口径见 [测试环境说明](benchmark-environment.md)。
+
 ## 实测结果
 
-2026-11-23，Windows 11 / Python 3.13.15 / MongoDB 8.0.4，独立的本机回环服务，`w=1`，默认 journaling。基线为提交 `975e865`，优化版为本次工作区。两个版本使用同一套测量脚本、同一服务，交替运行各 5 轮；以下为中位数。原始样本保存在 [优化前](../performance-before.json) 和 [优化后](../performance-after.json)。
+2026-11-23，Windows 11 / Python 3.13.15 / MongoDB 8.0.4，独立的本机回环服务，`w=1`，默认 journaling。基线为提交 `975e865`，优化版为提交 `f660b45`。两个版本使用同一套测量脚本、同一服务，交替运行各 5 轮；以下为中位数。原始样本保存在 [优化前](../performance-before.json) 和 [优化后](../performance-after.json)。后续优化另见 [Rust 与调度优化报告](native-performance.md)。
 
 | 测量项 | 优化前 | 优化后 | 前后耗时比 |
 | --- | ---: | ---: | ---: |

@@ -1,0 +1,183 @@
+{
+  "python": "3.13.15",
+  "platform": "Windows-11-10.0.26300-SP0",
+  "mongodb": "8.0.4",
+  "implementation_path": "C:\\Users\\admin\\Desktop\\PyORM\\.tools\\native-baseline\\pyorm",
+  "backend": "python",
+  "write_concern": {
+    "w": 1
+  },
+  "workload": {
+    "documents": 3000,
+    "mutations": 10,
+    "workers": 8,
+    "size": 1000,
+    "rounds": 5,
+    "captures": 1,
+    "max_pending": 1
+  },
+  "notes": "Disposable database; default journaling; medians of independent rounds. List size is --size, dict/set size is --size/10. Capture excludes MongoDB I/O; tracemalloc is measured separately from timings. Drain includes capture and acknowledged writes; cache queue capacity is recorded as max_pending. Concurrent assignments use disjoint documents and repeat the existing values. Baseline/Python/Rust rotated on the same isolated server.",
+  "medians": {
+    "cache": {
+      "load_seconds": 0.8074545999988914,
+      "cache_hit_seconds": 0.03304879999632249,
+      "assignment_seconds": 0.04110900000523543,
+      "drain_seconds": 2.258848700003,
+      "concurrent_assignment_seconds": 0.045206500006315764
+    },
+    "list": {
+      "load_seconds": 0.0009208000046783127,
+      "capture_ms": 0.21299999934853986,
+      "capture_peak_bytes": 36150,
+      "drain_ms": 1.3544999965233728
+    },
+    "dict": {
+      "load_seconds": 0.0004715999966720119,
+      "capture_ms": 0.13959999341750517,
+      "capture_peak_bytes": 9251,
+      "drain_ms": 0.9902000019792467
+    },
+    "set": {
+      "load_seconds": 0.0006607999966945499,
+      "capture_ms": 0.21150000247871503,
+      "capture_peak_bytes": 25098,
+      "drain_ms": 1.3197000007494353
+    }
+  },
+  "samples": {
+    "cache": [
+      {
+        "load_seconds": 0.752640300001076,
+        "cache_hit_seconds": 0.03284880000137491,
+        "assignment_seconds": 0.04056710000440944,
+        "drain_seconds": 2.0525778999945032,
+        "concurrent_assignment_seconds": 0.04438300000037998
+      },
+      {
+        "load_seconds": 0.7504877999963355,
+        "cache_hit_seconds": 0.03281950000382494,
+        "assignment_seconds": 0.04110900000523543,
+        "drain_seconds": 2.424484700000903,
+        "concurrent_assignment_seconds": 0.04462539999803994
+      },
+      {
+        "load_seconds": 0.8074545999988914,
+        "cache_hit_seconds": 0.03332550000050105,
+        "assignment_seconds": 0.04216129999986151,
+        "drain_seconds": 2.258848700003,
+        "concurrent_assignment_seconds": 0.04614969999965979
+      },
+      {
+        "load_seconds": 0.8292413000017405,
+        "cache_hit_seconds": 0.03304879999632249,
+        "assignment_seconds": 0.04096189999836497,
+        "drain_seconds": 2.1982053000028827,
+        "concurrent_assignment_seconds": 0.045206500006315764
+      },
+      {
+        "load_seconds": 0.8649629999999888,
+        "cache_hit_seconds": 0.03556859999662265,
+        "assignment_seconds": 0.043158099993888754,
+        "drain_seconds": 2.371865199995227,
+        "concurrent_assignment_seconds": 0.0464709000007133
+      }
+    ],
+    "list": [
+      {
+        "load_seconds": 0.0006972000046516769,
+        "capture_ms": 0.1923000017995946,
+        "capture_peak_bytes": 36150,
+        "drain_ms": 1.2449999994714744
+      },
+      {
+        "load_seconds": 0.0008601000008638948,
+        "capture_ms": 0.21299999934853986,
+        "capture_peak_bytes": 36150,
+        "drain_ms": 1.3544999965233728
+      },
+      {
+        "load_seconds": 0.0011496000006445684,
+        "capture_ms": 0.22429999808082357,
+        "capture_peak_bytes": 36150,
+        "drain_ms": 1.4166999972076155
+      },
+      {
+        "load_seconds": 0.0011140999995404854,
+        "capture_ms": 0.2117000040016137,
+        "capture_peak_bytes": 36150,
+        "drain_ms": 1.349300000583753
+      },
+      {
+        "load_seconds": 0.0009208000046783127,
+        "capture_ms": 0.2435000060359016,
+        "capture_peak_bytes": 36150,
+        "drain_ms": 1.5122999975574203
+      }
+    ],
+    "dict": [
+      {
+        "load_seconds": 0.0005060000039520673,
+        "capture_ms": 0.13959999341750517,
+        "capture_peak_bytes": 9251,
+        "drain_ms": 0.9902000019792467
+      },
+      {
+        "load_seconds": 0.0004326000052969903,
+        "capture_ms": 0.1512000017100945,
+        "capture_peak_bytes": 9251,
+        "drain_ms": 1.0234999936074018
+      },
+      {
+        "load_seconds": 0.00034330000198679045,
+        "capture_ms": 0.12000000424450263,
+        "capture_peak_bytes": 9251,
+        "drain_ms": 0.7494999954360537
+      },
+      {
+        "load_seconds": 0.0004715999966720119,
+        "capture_ms": 0.15069999790284783,
+        "capture_peak_bytes": 9251,
+        "drain_ms": 1.2617000029422343
+      },
+      {
+        "load_seconds": 0.0005249999958323315,
+        "capture_ms": 0.13870000111637637,
+        "capture_peak_bytes": 9251,
+        "drain_ms": 0.9533999982522801
+      }
+    ],
+    "set": [
+      {
+        "load_seconds": 0.0005698000022675842,
+        "capture_ms": 0.20869999571004882,
+        "capture_peak_bytes": 25098,
+        "drain_ms": 1.381299996864982
+      },
+      {
+        "load_seconds": 0.0006607999966945499,
+        "capture_ms": 0.207500001124572,
+        "capture_peak_bytes": 25098,
+        "drain_ms": 0.8791000000201166
+      },
+      {
+        "load_seconds": 0.0005617999995592982,
+        "capture_ms": 0.21500000002561137,
+        "capture_peak_bytes": 25098,
+        "drain_ms": 1.3197000007494353
+      },
+      {
+        "load_seconds": 0.0007152999969548546,
+        "capture_ms": 0.21150000247871503,
+        "capture_peak_bytes": 25098,
+        "drain_ms": 1.0242999996989965
+      },
+      {
+        "load_seconds": 0.0007240999984787777,
+        "capture_ms": 0.24110000231303275,
+        "capture_peak_bytes": 25098,
+        "drain_ms": 1.3523000015993603
+      }
+    ]
+  },
+  "baseline_commit": "f660b45"
+}

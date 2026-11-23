@@ -12,3 +12,7 @@ dist/
 .coverage
 htmlcov/
 .env
+*.pyd
+*.so
+*.dylib
+/native/target/

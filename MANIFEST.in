@@ -1,0 +1,2 @@
+include native/Cargo.toml native/Cargo.lock native/AGENTS.md
+recursive-include native/src *.rs

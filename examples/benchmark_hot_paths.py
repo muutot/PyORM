@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import statistics
+import sys
 import time
 import tracemalloc
 import uuid
@@ -46,7 +47,7 @@ def measure_cache(client, database, args):
         workers=args.workers,
         flush_interval=600,
         batch_size=args.documents + 1,
-        max_pending=args.workers * 4,
+        max_pending=args.max_pending,
     ) as manager:
         started = time.perf_counter()
         entries = [manager.get(Entry, i) for i in range(args.documents)]
@@ -134,12 +135,17 @@ def main():
     parser.add_argument("--size", type=int, default=100000)
     parser.add_argument("--rounds", type=int, default=5)
     parser.add_argument("--captures", type=int, default=5)
+    parser.add_argument("--max-pending", type=int)
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     if min(args.documents, args.mutations, args.workers, args.rounds, args.captures) < 1:
         parser.error("counts must be positive")
     if args.size < 10:
         parser.error("size must be at least 10")
+    if args.max_pending is not None and args.max_pending < 1:
+        parser.error("max-pending must be positive")
+    if args.max_pending is None:
+        args.max_pending = args.workers * 4
     database = "pyorm_benchmark_hot_paths_" + uuid.uuid4().hex
     samples = {name: [] for name in ("cache", "list", "dict", "set")}
     with MongoClient(args.uri, serverSelectionTimeoutMS=5000) as client:
@@ -162,6 +168,7 @@ def main():
         "platform": platform.platform(),
         "mongodb": version,
         "implementation_path": str(Path(pyorm.__file__).resolve().parent),
+        "backend": getattr(sys.modules.get("pyorm._acceleration"), "backend_name", "python"),
         "write_concern": {"w": 1},
         "workload": {
             key: value for key, value in vars(args).items() if key not in ("uri", "output")
@@ -170,7 +177,7 @@ def main():
             "Disposable database; default journaling; medians of independent rounds. "
             "List size is --size, dict/set size is --size/10. Capture excludes MongoDB I/O; "
             "tracemalloc is measured separately from timings. Drain includes capture and "
-            "acknowledged writes, with cache queue capacity limited to workers*4. "
+            "acknowledged writes; cache queue capacity is recorded as max_pending. "
             "Concurrent assignments use disjoint documents and repeat the existing values."
         ),
         "medians": medians,

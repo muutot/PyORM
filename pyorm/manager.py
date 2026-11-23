@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable
 from concurrent.futures import Future
 from dataclasses import dataclass
+from itertools import islice
 from types import TracebackType
 from typing import Any, Literal, Self
 
@@ -346,28 +347,39 @@ class Manager:
                     self._condition.wait()
                     continue
                 now = time.monotonic()
-                candidates = [
+                candidates = (
                     key
                     for key in self._pending
                     if key not in self._inflight and key not in self._blocked
-                ]
-                eligible = [key for key in candidates if self._retry_at.get(key, 0) <= now]
-                urgent = self._forcing or len(eligible) >= self.batch_size
-                ready = [
-                    key
-                    for key in eligible
-                    if urgent
-                    or key in self._retry_at
-                    or self._pending[key] + self.flush_interval <= now
-                ]
-                ready = ready[: max(0, slots)]
+                )
+                eligible = (key for key in candidates if self._retry_at.get(key, 0) <= now)
+                if self._forcing:
+                    # A drain needs only enough work to fill the available capacity.
+                    ready = list(islice(eligible, min(slots, len(self._pending))))
+                else:
+                    # Stop counting once the batch threshold is known to be met.
+                    batch = list(islice(eligible, min(self.batch_size, len(self._pending))))
+                    if len(batch) == self.batch_size:
+                        ready = batch[:slots]
+                        if len(ready) < slots:
+                            ready.extend(
+                                islice(eligible, min(slots - len(ready), len(self._pending)))
+                            )
+                    else:
+                        ready = [
+                            key
+                            for key in batch
+                            if key in self._retry_at
+                            or self._pending[key] + self.flush_interval <= now
+                        ][:slots]
                 if not ready:
                     deadlines = [
                         self._retry_at.get(
                             key,
                             now if self._forcing else self._pending[key] + self.flush_interval,
                         )
-                        for key in candidates
+                        for key in self._pending
+                        if key not in self._inflight and key not in self._blocked
                     ]
                     timeout = max(0.001, min(deadlines) - now) if deadlines and slots else None
                     self._condition.wait(timeout)

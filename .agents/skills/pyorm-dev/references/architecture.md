@@ -11,6 +11,7 @@ worker threads do not create a separate client per operation.
 | `pyorm/fields.py` | Typed descriptors, defaults, validation, BSON restoration |
 | `pyorm/tracking.py` | Nested change hooks and tracked containers |
 | `pyorm/serialization.py` | BSON encoding and incremental document differences |
+| `pyorm/_acceleration.py`, `native/` | Optional Rust BSON helpers with Python fallback |
 | `pyorm/connection.py`, `query.py`, `executor.py` | Lower-level repositories, queries, ordered execution |
 
 Initialize the manager once before business code. Examples use `Model.load(id)` and `self.attr = value`;
@@ -53,5 +54,17 @@ packet transfers its values to the snapshot without copying the complete tree ag
 fast paths use exact types; driver values and custom subclasses retain deepcopy behavior. Repeated
 mutations keep the first flush deadline and wake scheduling only for new pending work, unblocking,
 or changed batch/interval settings. Write completion wakes scheduling for newer generations.
+
+The dispatcher selects only available capacity during a forced drain, and stops counting eligible
+work once the batch threshold is met. Pending state, queue order, retries, deadlines, and failure
+visibility stay authoritative in the existing Python manager; blocked and future retries are skipped.
+
+Optional Rust helpers accelerate exact BSON containers, copying, set ordering/membership, and array
+prefix comparisons. Custom conversions, subclasses, driver values, and depth beyond 32 retain Python
+fallback behavior. Dictionary/list traversal uses Python iteration semantics around callbacks. Native
+copies preserve aliases/cycles and callback order; byte comparisons retain BSON type and field order.
+Safe PyO3 code releases the GIL only over immutable BSON bytes and Rust-owned metadata. Rust does not
+own locks, cache identity, generations, write packets, or persistence. Runtime PYORM_NATIVE selects
+auto/off/required at import; PYORM_BUILD_NATIVE selects optional/disabled/mandatory source builds.
 
 Treat the current implementations and tests as authoritative; update this map when ownership changes.

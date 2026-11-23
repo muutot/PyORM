@@ -244,17 +244,75 @@ $env:MONGODB_URI = 'mongodb://localhost:27017'
 
 MongoORM / Repository / QuerySet 保留为底层显式数据库接口；托管业务对象使用 Manager，避免通过底层接口绕过缓存。
 
-前一版的单次基准运行环境为 Python 3.13.15 / 本机 MongoDB 8.0.4 / 8 个写库线程。100,000 次缓存赋值耗时约 0.18 秒，自动排空 1,000 笔增量写入耗时约 0.23 秒；这是历史本机结果，生产环境请运行脚本测量。
+### ORM 性能实测
 
-### ORM 热路径优化
+优化减少重复赋值的调度唤醒、容器转换和快照复制，并限制任务选择时的队列扫描。文档锁、缓存身份、变更代次、版本检查、增量写入和重试机制继续生效。
 
-当前版本减少重复赋值对调度线程的唤醒，优化原生标量和 BSON 快照复制，并在队列满时直接等待写入完成。文档锁、版本检查、写确认和重试机制继续生效。相同本机服务上交替测量前后版本各 5 轮：100,000 次单线程赋值从 264 ms 降至 155 ms，十万元素列表生成写入包从 70.07 ms 降至 19.79 ms。并发收益受操作系统线程调度影响较大，完整样本、内存数据和稳定性验证见 [性能优化报告](docs/performance.md)。
+测试日期为 2026-11-23，以下结果是同一独立 MongoDB 服务上交替 / 轮换各 5 轮的中位数。
+
+| 测试环境 | 配置 |
+| --- | --- |
+| 机器 / CPU | HP Elite Tower 880 G9；Intel Core i7-14700，20 核 / 28 线程 |
+| 内存 / 数据盘 | 32 GiB DDR5；SK hynix PC801 1 TB NVMe SSD |
+| 系统 / 软件 | Windows 11 专业版 x64，build 26300；CPython 3.13.15；PyMongo 4.20.1；MongoDB 8.0.4 |
+| 数据库 / 原生构建 | 同机回环 TCP，`w=1`、默认 journaling；Rust 1.99.1 / PyO3 0.30.1，release / thin LTO |
+
+机器配置与驱动版本为同机补录信息；完整来源、线程与队列参数、计时口径见 [测试环境说明](docs/benchmark-environment.md)。快照计时排除网络，排空计时包括快照、调度和数据库确认；Python 分配峰值不等于整个进程内存。
+
+同一当前版本可选择 Python 或 Rust 后端。`PYORM_NATIVE=off` 强制 Python，`PYORM_NATIVE=required` 强制 Rust 并要求扩展可用。默认 `auto` 在扩展可用时使用相同 Rust 后端，否则使用 Python。以下对比来自同轮的 [Python 样本](performance-native-python.json) 与 [Rust 样本](performance-native-rust.json)。
+
+容器分别追加 2 个列表元素、修改一个字典值、新增一个集合成员；快照每轮捕获 5 次。
+
+| 测量项 | Python：`off` ms | Rust：`required` ms | Python / Rust 耗时比 |
+| --- | ---: | ---: | ---: |
+| 100,000 元素列表快照 | 16.25 | 11.48 | 1.42× |
+| 10,000 键字典快照 | 8.24 | 3.65 | 2.26× |
+| 10,000 成员集合快照 | 15.53 | 3.97 | 3.91× |
+| 列表增量排空，含写入确认 | 30.33 | 25.43 | 1.19× |
+| 字典增量排空，含写入确认 | 9.80 | 5.31 | 1.84× |
+| 集合增量排空，含写入确认 | 18.13 | 6.55 | 2.77× |
+
+标量赋值负载为 1,000 个文档、每个赋值 100 次；Python 和 Rust 的单线程赋值中位数分别约 134 ms、132 ms，在本轮没有明显 Rust 收益。
+
+小容量队列负载另测：3,000 个标量文档，每个赋值 10 次，8 个写库线程，`max_pending=1`。
+
+| 排空 3,000 个文档 | Python：`off` | Rust：`required` |
+| --- | ---: | ---: |
+| 中位耗时 | 1.445 s | 1.599 s |
+
+本次小容量标量队列测试中，Rust 耗时约比 Python 多 11%；按负载选择后端。原始数据见 [Python 队列样本](performance-queue-python.json) 与 [Rust 队列样本](performance-queue-rust.json)。并发赋值受线程调度影响明显；数据库吞吐收益也取决于网络、索引和写确认配置。完整样本、内存数据和稳定性验证见 [Rust / 调度优化报告](docs/native-performance.md)；历史优化记录另见 [Python 优化报告](docs/performance.md)。Rust 模式真实数据库测试 134 项通过；Python 模式 127 项通过、7 项原生专项跳过，两种安装包也通过完整数据库测试。
 
 ```powershell
-.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output performance-current.json
+$env:PYORM_NATIVE = 'off'
+.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output performance-python.json
+$env:PYORM_NATIVE = 'required'
+.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output performance-rust.json
+Remove-Item Env:PYORM_NATIVE
 ```
 
-此脚本创建并清理独立的临时数据库，分别测量初次加载、缓存命中、单线程/并发赋值、写入包生成和真实落库。写入包计时不包括网络，落库计时包括写入确认；内存测量与耗时测量分开进行。
+此脚本创建并清理独立的临时数据库，分别测量初次加载、缓存命中、单线程/并发赋值、写入包生成和真实落库。写入包计时不包括网络，落库计时包括写入确认；内存测量与耗时测量分开进行。上面命令分别测量两种模式；正式比较时应在同一服务上轮换运行两种模式，并核对输出的 backend 和 workload。
+
+可选 Rust 扩展进一步加速 BSON 容器转换、快照复制、集合排序及数组比较。Manager 的缓存身份、文档锁、变更代次、增量写入和重试由 Python 管理。排空及达到批量阈值时只选取当前任务容量需要的文档，减少大队列的扫描。测量结果及适用范围见 [Rust 与调度优化报告](docs/native-performance.md)。
+
+运行时 `PYORM_NATIVE=auto` 为默认值：扩展可用时使用 Rust，缺少扩展时使用 Python；动态库加载失败会记录警告。`PYORM_NATIVE=off` 强制使用 Python，`required` 要求扩展可用，失败时抛出异常。变量在导入 PyORM 前设置，修改后需重启进程。
+
+源码安装的 `PYORM_BUILD_NATIVE=auto` 会尝试构建扩展，缺少工具链或编译失败时允许安装 Python 版本；`required` 要求构建成功，`off` 跳过 Rust 并生成纯 Python wheel。原生构建需要 Rust 1.85 或更高版本及系统链接工具；Windows 使用 MSVC Build Tools。原生 wheel 匹配 Python 版本、系统和架构；纯 Python wheel 无需 Rust。构建命令示例：
+
+```powershell
+$env:PYORM_BUILD_NATIVE = 'required'
+uv build --python .\.venv\Scripts\python.exe --link-mode copy --wheel --out-dir dist/native
+
+$env:PYORM_BUILD_NATIVE = 'off'
+uv build --python .\.venv\Scripts\python.exe --link-mode copy --wheel --out-dir dist/python
+Remove-Item Env:PYORM_BUILD_NATIVE
+
+# 两种运行模式使用同一套行为测试；设置 URI 时包括真实数据库测试。
+$env:PYORM_NATIVE = 'required'
+.\.venv\Scripts\python.exe -m pytest -q
+$env:PYORM_NATIVE = 'off'
+.\.venv\Scripts\python.exe -m pytest -q
+Remove-Item Env:PYORM_NATIVE
+```
 
 ### 数据库为瓶颈时的数组更新
 
