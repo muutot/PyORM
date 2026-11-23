@@ -1,0 +1,4 @@
+interface:
+  display_name: "PyORM Version Release"
+  short_description: "Prepare and verify a PyORM Python package release"
+  default_prompt: "Use $version-release to prepare the requested PyORM version with uv."

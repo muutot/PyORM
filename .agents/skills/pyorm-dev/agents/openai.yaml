@@ -1,0 +1,4 @@
+interface:
+  display_name: "PyORM Development"
+  short_description: "Maintain the Python 3.13 MongoDB ORM and cache"
+  default_prompt: "Use $pyorm-dev to implement and verify a PyORM change."
