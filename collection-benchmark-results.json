@@ -1,0 +1,249 @@
+{
+  "mongodb_version": "8.0.4",
+  "write_concern": {
+    "w": 1
+  },
+  "notes": "Integer arrays, sequential writes, prebuilt updates, default journaling. Payload excludes wire framing. Server latency is the global opLatencies write delta: run against an idle, isolated server. This measures service time, not sustained throughput at database saturation.",
+  "results": [
+    {
+      "base_size": 100,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "set_array",
+      "mean_payload_bytes": 1359,
+      "mean_total_ms": 0.2351,
+      "mean_server_ms": 0.1086,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "set_indices",
+      "mean_payload_bytes": 118,
+      "mean_total_ms": 0.221,
+      "mean_server_ms": 0.1049,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "push_each",
+      "mean_payload_bytes": 146,
+      "mean_total_ms": 0.2247,
+      "mean_server_ms": 0.1113,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "add_to_set_each",
+      "mean_payload_bytes": 150,
+      "mean_total_ms": 0.2268,
+      "mean_server_ms": 0.1138,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "set_array",
+      "mean_payload_bytes": 16287,
+      "mean_total_ms": 0.3857,
+      "mean_server_ms": 0.2087,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "set_indices",
+      "mean_payload_bytes": 637,
+      "mean_total_ms": 0.5345,
+      "mean_server_ms": 0.3985,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "push_each",
+      "mean_payload_bytes": 385,
+      "mean_total_ms": 0.3711,
+      "mean_server_ms": 0.2483,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "add_to_set_each",
+      "mean_payload_bytes": 389,
+      "mean_total_ms": 1.5928,
+      "mean_server_ms": 1.4138,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 10000,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "set_array",
+      "mean_payload_bytes": 99560,
+      "mean_total_ms": 1.2179,
+      "mean_server_ms": 0.768,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 10000,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "set_indices",
+      "mean_payload_bytes": 120,
+      "mean_total_ms": 0.7967,
+      "mean_server_ms": 0.65,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 10000,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "push_each",
+      "mean_payload_bytes": 146,
+      "mean_total_ms": 1.1259,
+      "mean_server_ms": 0.9575,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 10000,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "add_to_set_each",
+      "mean_payload_bytes": 150,
+      "mean_total_ms": 1.3385,
+      "mean_server_ms": 1.1699,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 10000,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "set_array",
+      "mean_payload_bytes": 116781,
+      "mean_total_ms": 1.3476,
+      "mean_server_ms": 0.8566,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 10000,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "set_indices",
+      "mean_payload_bytes": 678,
+      "mean_total_ms": 2.1569,
+      "mean_server_ms": 1.951,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 10000,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "push_each",
+      "mean_payload_bytes": 385,
+      "mean_total_ms": 1.2717,
+      "mean_server_ms": 1.0927,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 10000,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "add_to_set_each",
+      "mean_payload_bytes": 389,
+      "mean_total_ms": 9.3256,
+      "mean_server_ms": 8.9923,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "set_array",
+      "mean_payload_bytes": 1089611,
+      "mean_total_ms": 15.5167,
+      "mean_server_ms": 10.7921,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "set_indices",
+      "mean_payload_bytes": 121,
+      "mean_total_ms": 9.2061,
+      "mean_server_ms": 8.8485,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "push_each",
+      "mean_payload_bytes": 146,
+      "mean_total_ms": 12.551,
+      "mean_server_ms": 12.1491,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 1,
+      "iterations": 100,
+      "strategy": "add_to_set_each",
+      "mean_payload_bytes": 150,
+      "mean_total_ms": 14.5343,
+      "mean_server_ms": 14.1503,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "set_array",
+      "mean_payload_bytes": 1108397,
+      "mean_total_ms": 15.3352,
+      "mean_server_ms": 10.6221,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "set_indices",
+      "mean_payload_bytes": 710,
+      "mean_total_ms": 19.5479,
+      "mean_server_ms": 19.1165,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "push_each",
+      "mean_payload_bytes": 385,
+      "mean_total_ms": 11.5467,
+      "mean_server_ms": 11.1663,
+      "server_write_ops": 100
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 32,
+      "iterations": 100,
+      "strategy": "add_to_set_each",
+      "mean_payload_bytes": 389,
+      "mean_total_ms": 83.0101,
+      "mean_server_ms": 82.5587,
+      "server_write_ops": 100
+    }
+  ]
+}

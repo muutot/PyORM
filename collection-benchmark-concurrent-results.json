@@ -1,0 +1,57 @@
+{
+  "mongodb_version": "8.0.4",
+  "write_concern": {
+    "w": 1
+  },
+  "notes": "Integer arrays, one document per worker, prebuilt updates, default journaling. Payload excludes wire framing. Server latency is the global opLatencies write delta: run against an idle, isolated server. This measures service time and observed throughput at the selected concurrency, not a universal database saturation limit.",
+  "results": [
+    {
+      "base_size": 100000,
+      "batch_size": 32,
+      "iterations": 50,
+      "workers": 8,
+      "strategy": "set_array",
+      "mean_payload_bytes": 1098797,
+      "mean_total_ms": 39.8084,
+      "mean_server_ms": 24.44,
+      "operations_per_second": 192.78,
+      "server_write_ops": 400
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 32,
+      "iterations": 50,
+      "workers": 8,
+      "strategy": "set_indices",
+      "mean_payload_bytes": 710,
+      "mean_total_ms": 42.4121,
+      "mean_server_ms": 41.6526,
+      "operations_per_second": 183.56,
+      "server_write_ops": 400
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 32,
+      "iterations": 50,
+      "workers": 8,
+      "strategy": "push_each",
+      "mean_payload_bytes": 385,
+      "mean_total_ms": 27.158,
+      "mean_server_ms": 26.463,
+      "operations_per_second": 288.9,
+      "server_write_ops": 400
+    },
+    {
+      "base_size": 100000,
+      "batch_size": 32,
+      "iterations": 50,
+      "workers": 8,
+      "strategy": "add_to_set_each",
+      "mean_payload_bytes": 389,
+      "mean_total_ms": 134.2848,
+      "mean_server_ms": 133.4875,
+      "operations_per_second": 59.27,
+      "server_write_ops": 400
+    }
+  ]
+}
