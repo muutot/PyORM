@@ -7,9 +7,10 @@ description: Prepare a PyORM Python package version bump or release when explici
 
 Read [verification.md](../pyorm-dev/references/verification.md). Use `pyproject.toml` as the single
 version source. Git starts on `main`, with `origin` at `https://github.com/muutot/PyORM.git`.
-Inspect actual history and remote state for requested release work. No remote release workflow is
-configured yet; do not assume GitHub Actions or package-index publishing, or rewrite history/delete
-tags/force-push as a side effect of preparing a package.
+Inspect actual history and remote state for requested release work. The configured GitHub Release
+workflow is [release.yml](../../../.github/workflows/release.yml); its triggers, wheel matrix and
+verification gates are documented in [releases.md](../../../docs/releases.md). Do not assume
+package-index publishing, or rewrite history/delete tags/force-push as a side effect of preparing a package.
 
 1. Establish the requested version and scope from the user instruction. Inspect the final source and
    any existing changelog. Do not bump the version for routine development or skill installation.
@@ -25,9 +26,13 @@ tags/force-push as a side effect of preparing a package.
    than conversational history. Inspect README and development references for currency.
 4. Validate the final tree with Ruff, Pyright, and appropriate pytest checks. Include real MongoDB
    verification for persistence/operator changes before claiming release readiness.
-5. Build using `uv build --python .\.venv\Scripts\python.exe --link-mode copy --wheel`. Inspect
-   metadata, package files, py.typed, and isolated import/type inference. Deliver the artifact and
-   verification evidence. Avoid old Windows metadata overwrite failures using a fresh staging folder.
+5. GitHub Release artifacts must all be built by the configured Actions workflow from the release
+   tag, with native builds required and all verification gates passing. Do not upload local packages
+   to that Release. For an explicitly requested local regeneration, use
+   `uv build --python .\.venv\Scripts\python.exe --link-mode copy --wheel`, verify native and pure
+   wheels as described in the verification reference, and inspect metadata, package files, py.typed
+   and isolated import/type inference. Avoid old Windows metadata overwrite failures using a fresh
+   staging folder.
 
 For `--regenerate` requests, rebuild current content at the current version after the same checks;
 do not rewrite commits or tags. For authorized commits, keep formatting-only changes separate where

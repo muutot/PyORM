@@ -18,11 +18,16 @@ changed behavior; documentation changes require link/command checks rather than 
 Pyright checks `tests/typing` and the quickstart for descriptor inference. Ruff excludes vendored skills;
 check newly owned Python helper scripts explicitly. Do not reformat unmodified imported shared skills.
 
+The GitHub [release workflow](../../../../.github/workflows/release.yml) checks scripts/ci alongside
+the package, tests and examples. It builds pure and CPython 3.13/3.14 native wheels, validates installed
+backends outside the checkout, and gates tag releases on real MongoDB checks. See
+[release instructions](../../../../docs/releases.md) for the supported platforms and trigger behavior.
+
 For real MongoDB, set `PYORM_TEST_URI` to a disposable server and run pytest. Integration fixtures use
 random `pyorm_test_*` databases and drop only their own databases. If starting a temporary mongod, bind
 to loopback, keep its data in the workspace, wait for readiness, and stop it in `finally`. Keep benchmarks
 separate from correctness verification and report environment and workload with performance claims.
-`examples/benchmark_hot_paths.py --rounds 5 --output performance-current.json` measures cache work,
+`examples/benchmark_hot_paths.py --rounds 5 --output docs/benchmarks/performance-current.json` measures cache work,
 packet capture, and acknowledged MongoDB drains separately; capture timing is not server performance.
 Use the same isolated service and workload for comparisons, alternate versions, and retain all samples.
 

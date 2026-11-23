@@ -22,7 +22,7 @@
 
 本项目已初始化 Git，初始分支为 `main`，`origin` 为
 `https://github.com/muutot/PyORM.git`。沿用一次提交一个已验证改动、gitmoji 格式及提交前
-检查文档是否同步的约定。远程发布流程尚未配置，应以实际工作流和用户授权为准。
+检查文档是否同步的约定。GitHub Release 流程见 [发布说明](../releases.md)，应以实际工作流和用户授权为准。
 Python 环境与依赖使用 uv，目标版本为 3.13。
 
 入口：[根 AGENTS](../../AGENTS.md)、

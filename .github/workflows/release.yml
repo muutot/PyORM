@@ -1,0 +1,238 @@
+name: Build wheels and release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  UV_LINK_MODE: copy
+
+jobs:
+  metadata:
+    name: Check package and tag version
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: '3.13'
+      - name: Validate metadata
+        id: version
+        run: |
+          uv venv --python 3.13 .venv
+          .venv/bin/python scripts/ci/release_artifacts.py metadata
+
+  verify:
+    name: Verify Python ${{ matrix.python }} with MongoDB
+    needs: metadata
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ['3.13', '3.14']
+    services:
+      mongo:
+        image: mongo:8.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping: 1})'"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      PYORM_BUILD_NATIVE: required
+      PYORM_TEST_URI: mongodb://127.0.0.1:27017
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install development environment
+        env:
+          PYTHON_VERSION: ${{ matrix.python }}
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup override set stable
+          uv venv --python "$PYTHON_VERSION" .venv
+          export PYO3_PYTHON="$GITHUB_WORKSPACE/.venv/bin/python"
+          uv pip install --python .venv/bin/python --link-mode copy -e '.[dev]'
+      - name: Check formatting, types and Rust
+        run: |
+          .venv/bin/python -m ruff format --check pyorm tests examples scripts/ci
+          .venv/bin/python -m ruff check pyorm tests examples scripts/ci
+          .venv/bin/python -m pyright
+          export PYO3_PYTHON="$GITHUB_WORKSPACE/.venv/bin/python"
+          cargo fmt --manifest-path native/Cargo.toml --check
+          cargo clippy --locked --manifest-path native/Cargo.toml --all-targets -- -D warnings
+          cargo test --locked --manifest-path native/Cargo.toml
+      - name: Test Rust mode with real MongoDB
+        env:
+          PYORM_NATIVE: required
+        run: .venv/bin/python -m pytest -q
+      - name: Test Python mode with real MongoDB
+        env:
+          PYORM_NATIVE: off
+        run: .venv/bin/python -m pytest -q
+
+  python-wheel:
+    name: Build pure Python wheel and source archive
+    needs: [metadata, verify]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      mongo:
+        image: mongo:8.0
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping: 1})'"
+          --health-interval 10s --health-timeout 5s --health-retries 10
+    env:
+      PYORM_BUILD_NATIVE: off
+      PYORM_TEST_URI: mongodb://127.0.0.1:27017
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: '3.13'
+      - name: Build distributions
+        run: |
+          uv venv --python 3.13 .venv
+          uv build --python .venv/bin/python --link-mode copy --wheel --sdist
+      - name: Test the installed wheel outside the checkout
+        run: |
+          uv venv --python .venv/bin/python "$RUNNER_TEMP/wheel-tests/.venv"
+          uv pip install --python "$RUNNER_TEMP/wheel-tests/.venv/bin/python" --link-mode copy dist/*.whl 'pytest>=8' 'mongomock>=4.3,<5'
+          cp -R tests "$RUNNER_TEMP/wheel-tests/tests"
+          mkdir -p "$RUNNER_TEMP/wheel-tests/pyorm" "$RUNNER_TEMP/wheel-tests/examples"
+          cp pyorm/_acceleration.py "$RUNNER_TEMP/wheel-tests/pyorm/"
+          cp examples/quickstart.py "$RUNNER_TEMP/wheel-tests/examples/"
+          cd "$RUNNER_TEMP/wheel-tests"
+          .venv/bin/python "$GITHUB_WORKSPACE/scripts/ci/test_wheel.py" --backend python
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wheels-python
+          path: dist/*
+          if-no-files-found: error
+
+  native-wheels:
+    name: Build Rust wheels (${{ matrix.os }}, ${{ matrix.arch }})
+    needs: [metadata, verify]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: x86_64
+          - os: windows-latest
+            arch: AMD64
+          - os: macos-14
+            arch: arm64
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: '3.13'
+      - name: Select Rust toolchain on Windows and macOS
+        if: runner.os != 'Linux'
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup override set stable
+      - name: Build and test native wheels
+        uses: pypa/cibuildwheel@f9b966cfadf4109556cadc5bb39ddb72d0ce664e # v4.3.5
+        env:
+          CIBW_BUILD: 'cp313-* cp314-*'
+          CIBW_SKIP: '*-musllinux_*'
+          CIBW_ARCHS: ${{ matrix.arch }}
+          CIBW_BUILD_FRONTEND: 'build[uv]'
+          CIBW_ENVIRONMENT: 'PYORM_BUILD_NATIVE=required UV_LINK_MODE=copy'
+          CIBW_BEFORE_ALL_LINUX: 'bash {project}/scripts/ci/install-rust.sh'
+          CIBW_ENVIRONMENT_LINUX: 'PYORM_BUILD_NATIVE=required UV_LINK_MODE=copy PATH="$HOME/.cargo/bin:$PATH"'
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_TEST_REQUIRES: 'pytest>=8 mongomock>=4.3,<5'
+          CIBW_TEST_SOURCES: 'tests pyorm/_acceleration.py examples/quickstart.py scripts/ci/test_wheel.py'
+          CIBW_TEST_COMMAND: 'python scripts/ci/test_wheel.py --backend rust'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: wheels-native-${{ runner.os }}-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  artifacts:
+    name: Verify and collect release artifacts
+    needs: [metadata, python-wheel, native-wheels]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: wheels-*
+          path: dist
+          merge-multiple: true
+      - name: Check all distributions and generate checksums
+        run: |
+          uv venv --python 3.13 .venv
+          .venv/bin/python scripts/ci/release_artifacts.py artifacts --directory dist
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-dist
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    name: Publish GitHub Release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    needs: artifacts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: release-dist
+          path: dist
+      - name: Upload assets to a draft, then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          if gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' > "$RUNNER_TEMP/release-draft.txt"; then
+            if [ "$(cat "$RUNNER_TEMP/release-draft.txt")" != true ]; then
+              echo "Release $RELEASE_TAG is already published; refusing to overwrite it." >&2
+              exit 1
+            fi
+            gh release upload "$RELEASE_TAG" dist/* --clobber
+          else
+            gh release create "$RELEASE_TAG" dist/* --verify-tag --draft --title "$RELEASE_TAG" --generate-notes
+          fi
+          gh release edit "$RELEASE_TAG" --draft=false

@@ -1,4 +1,4 @@
-# PyORM Mongo — 实例属性与自动存盘 Manager
+# PyORM — 自动持久化的 Python MongoDB ORM
 
 Python **3.13+**，运行时仅依赖 PyMongo。业务代码直接写 `self.xxx = value`，Manager 负责首次加载、唯一实例缓存、脏字段合并、多线程写库和退出时排空。
 
@@ -237,10 +237,10 @@ $env:PYORM_TEST_URI = 'mongodb://localhost:27017'
 .\.venv\Scripts\python.exe -m pytest -q -m integration
 
 $env:MONGODB_URI = 'mongodb://localhost:27017'
-.\.venv\Scripts\python.exe examples\benchmark.py --operations 1000 --threads 8 --mutations 100
+.\.venv\Scripts\python.exe examples\benchmark.py --operations 1000 --threads 8 --mutations 100 --output docs/benchmarks/benchmark-results.json
 ```
 
-基准先全量加载 1,000 个文档，再执行 100,000 次缓存赋值，退出时自动合并成 1,000 笔文档增量写入。初次加载、缓存赋值速度和落库速度分别计量；实际吞吐依赖网络、索引和 MongoDB 写确认方式。结果保存在 `benchmark-results.json`。
+基准先全量加载 1,000 个文档，再执行 100,000 次缓存赋值，退出时自动合并成 1,000 笔文档增量写入。初次加载、缓存赋值速度和落库速度分别计量；实际吞吐依赖网络、索引和 MongoDB 写确认方式。结果保存在 [docs/benchmarks/benchmark-results.json](docs/benchmarks/benchmark-results.json)。基准结果与对比样本统一存放于 [docs/benchmarks](docs/benchmarks/README.md)。
 
 MongoORM / Repository / QuerySet 保留为底层显式数据库接口；托管业务对象使用 Manager，避免通过底层接口绕过缓存。
 
@@ -259,7 +259,7 @@ MongoORM / Repository / QuerySet 保留为底层显式数据库接口；托管�
 
 机器配置与驱动版本为同机补录信息；完整来源、线程与队列参数、计时口径见 [测试环境说明](docs/benchmark-environment.md)。快照计时排除网络，排空计时包括快照、调度和数据库确认；Python 分配峰值不等于整个进程内存。
 
-同一当前版本可选择 Python 或 Rust 后端。`PYORM_NATIVE=off` 强制 Python，`PYORM_NATIVE=required` 强制 Rust 并要求扩展可用。默认 `auto` 在扩展可用时使用相同 Rust 后端，否则使用 Python。以下对比来自同轮的 [Python 样本](performance-native-python.json) 与 [Rust 样本](performance-native-rust.json)。
+同一当前版本可选择 Python 或 Rust 后端。`PYORM_NATIVE=off` 强制 Python，`PYORM_NATIVE=required` 强制 Rust 并要求扩展可用。默认 `auto` 在扩展可用时使用相同 Rust 后端，否则使用 Python。以下对比来自同轮的 [Python 样本](docs/benchmarks/performance-native-python.json) 与 [Rust 样本](docs/benchmarks/performance-native-rust.json)。
 
 容器分别追加 2 个列表元素、修改一个字典值、新增一个集合成员；快照每轮捕获 5 次。
 
@@ -280,13 +280,13 @@ MongoORM / Repository / QuerySet 保留为底层显式数据库接口；托管�
 | --- | ---: | ---: |
 | 中位耗时 | 1.445 s | 1.599 s |
 
-本次小容量标量队列测试中，Rust 耗时约比 Python 多 11%；按负载选择后端。原始数据见 [Python 队列样本](performance-queue-python.json) 与 [Rust 队列样本](performance-queue-rust.json)。并发赋值受线程调度影响明显；数据库吞吐收益也取决于网络、索引和写确认配置。完整样本、内存数据和稳定性验证见 [Rust / 调度优化报告](docs/native-performance.md)；历史优化记录另见 [Python 优化报告](docs/performance.md)。Rust 模式真实数据库测试 134 项通过；Python 模式 127 项通过、7 项原生专项跳过，两种安装包也通过完整数据库测试。
+本次小容量标量队列测试中，Rust 耗时约比 Python 多 11%；按负载选择后端。原始数据见 [Python 队列样本](docs/benchmarks/performance-queue-python.json) 与 [Rust 队列样本](docs/benchmarks/performance-queue-rust.json)。并发赋值受线程调度影响明显；数据库吞吐收益也取决于网络、索引和写确认配置。完整样本、内存数据和稳定性验证见 [Rust / 调度优化报告](docs/native-performance.md)；历史优化记录另见 [Python 优化报告](docs/performance.md)。Rust 模式真实数据库测试 134 项通过；Python 模式 127 项通过、7 项原生专项跳过，两种安装包也通过完整数据库测试。
 
 ```powershell
 $env:PYORM_NATIVE = 'off'
-.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output performance-python.json
+.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output docs/benchmarks/performance-python.json
 $env:PYORM_NATIVE = 'required'
-.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output performance-rust.json
+.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output docs/benchmarks/performance-rust.json
 Remove-Item Env:PYORM_NATIVE
 ```
 
@@ -314,13 +314,19 @@ $env:PYORM_NATIVE = 'off'
 Remove-Item Env:PYORM_NATIVE
 ```
 
+### GitHub Actions 构建与发布
+
+[发布工作流](.github/workflows/release.yml) 在推送 `vX.Y.Z` 标签时构建并发布 GitHub Release，标签必须与 `pyproject.toml` 中的版本一致。Actions 页面手动运行只构建和保存产物。
+
+全部发布产物由 Actions 构建，包含纯 Python wheel、源码包，以及 CPython 3.13 / 3.14 的 Windows x64、Linux x64（manylinux 2.28）、macOS ARM64 Rust wheel。Rust 使用最高常规优化等级、完整 LTO、单 codegen unit，保留 panic 展开与通用架构兼容性。发布前检查格式、类型、两种后端的真实 MongoDB 测试及安装包测试，附件包含 `SHA256SUMS`。触发方法、平台范围及失败重跑见 [发布说明](docs/releases.md)。
+
 ### 数据库为瓶颈时的数组更新
 
 `examples/benchmark_collections.py` 对比整数组 `$set`、索引 `$set`、`$push` / `$each`、`$addToSet` / `$each`，测量写入报文大小、客户端耗时、数据库写入服务时间和吞吐。它创建并清理独立的临时基准数据库；数据库服务时间来自全局 `opLatencies`，应在隔离、空闲的服务上运行。
 
 ```powershell
 .\.venv\Scripts\python.exe examples\benchmark_collections.py
-.\.venv\Scripts\python.exe examples\benchmark_collections.py --sizes 100000 --batches 32 --workers 8 --iterations 50 --output collection-benchmark-concurrent-results.json
+.\.venv\Scripts\python.exe examples\benchmark_collections.py --sizes 100000 --batches 32 --workers 8 --iterations 50 --output docs/benchmarks/collection-benchmark-concurrent-results.json
 ```
 
 Python 3.13.15 / 本机 MongoDB 8.0.4 / `w=1`，已有 100,000 个整数的数组，每种策略 100 次写入，单工作线程的实测：
@@ -334,7 +340,7 @@ Python 3.13.15 / 本机 MongoDB 8.0.4 / `w=1`，已有 100,000 个整数的数�
 
 报文缩小不代表数据库工作量按同比例下降，`$push` 也可能需要处理较大的原文档。单个新增采用固定索引，批量新增采用 `$push`，集合去重移到缓存端，以减少数据库操作开销。Manager 合并未确认变化以减少写入次数；数据库已经饱和时，提高工作线程数不一定提高吞吐，需同时观察吞吐和延迟。持续增长的大数组应按业务拆成有界分桶或独立集合，避免整个大文档成为长期写入瓶颈。
 
-具体结果见 `collection-benchmark-results.json`；这是单次本机测量，数组元素、索引、写确认、并发和磁盘条件都会影响结果。
+具体结果见 [collection-benchmark-results.json](docs/benchmarks/collection-benchmark-results.json)；这是单次本机测量，数组元素、索引、写确认、并发和磁盘条件都会影响结果。
 
 相同服务下，8 个工作线程分别写独立文档，数组初始 100,000 个整数，每次新增 32 个，每线程 50 次写入：
 
@@ -345,4 +351,4 @@ Python 3.13.15 / 本机 MongoDB 8.0.4 / `w=1`，已有 100,000 个整数的数�
 | `$push` / `$each` | 26.46 | 289 |
 | `$addToSet` / `$each` | 133.49 | 59 |
 
-详情见 `collection-benchmark-concurrent-results.json`。并发下的数据库服务时间包含等待，不是 CPU 时间；本例 `$push` 的服务时间与整数组 `$set` 接近，吞吐收益更多来自更小的报文和更少的客户端 BSON 编码工作。这是操作符基准，预先生成更新内容，不包括 ORM 构造和对比快照的耗时。
+详情见 [collection-benchmark-concurrent-results.json](docs/benchmarks/collection-benchmark-concurrent-results.json)。并发下的数据库服务时间包含等待，不是 CPU 时间；本例 `$push` 的服务时间与整数组 `$set` 接近，吞吐收益更多来自更小的报文和更少的客户端 BSON 编码工作。这是操作符基准，预先生成更新内容，不包括 ORM 构造和对比快照的耗时。

@@ -38,7 +38,7 @@
 
 单次捕获的 Python 分配峰值：列表 3,780,278 → 2,980,492 B，字典 733,731 → 734,011 B，集合 2,101,154 → 284,658 B。tracemalloc 不计入 Rust 分配器中的向量和哈希表，也不计入预先存在的缓存，不能将集合的约 86% Python 分配下降解释为整个进程内存下降 86%。
 
-原始样本：[基线](../performance-native-baseline.json)、[当前 Python](../performance-native-python.json)、[当前 Rust](../performance-native-rust.json)。标量赋值三组中位数约 134、134、132 ms；该负载没有可归因于 Rust 的明显收益。并发赋值受线程调度影响明显，保留全部样本但不作为稳定收益承诺。
+原始样本：[基线](benchmarks/performance-native-baseline.json)、[当前 Python](benchmarks/performance-native-python.json)、[当前 Rust](benchmarks/performance-native-rust.json)。标量赋值三组中位数约 134、134、132 ms；该负载没有可归因于 Rust 的明显收益。并发赋值受线程调度影响明显，保留全部样本但不作为稳定收益承诺。
 
 ## 小容量大队列
 
@@ -50,7 +50,7 @@
 | 当前 Python | 1.445 | 36% |
 | 当前 Rust | 1.599 | 29% |
 
-本负载主要受调度和逐笔数据库确认影响。Python 排空改善表明无需 Rust 就能消除一部分调度扫描开销；Rust 没有额外改善该标量负载。原始样本：[基线](../performance-queue-baseline.json)、[当前 Python](../performance-queue-python.json)、[当前 Rust](../performance-queue-rust.json)。
+本负载主要受调度和逐笔数据库确认影响。Python 排空改善表明无需 Rust 就能消除一部分调度扫描开销；Rust 没有额外改善该标量负载。原始样本：[基线](benchmarks/performance-queue-baseline.json)、[当前 Python](benchmarks/performance-queue-python.json)、[当前 Rust](benchmarks/performance-queue-rust.json)。
 
 强制排空只选择当前空位需要的合格文档。自动调度只计数到 batch 阈值，达到阈值即选择有限任务；未达阈值保留原有截止时间和重试筛选。全部状态仍由原有 pending、inflight、blocked、retry 映射管理。大量阻塞/未来重试条目或未达 batch 阈值时仍可能遍历待写队列，本轮没有改变这些异常路径的数据结构。
 
@@ -75,10 +75,10 @@
 ```powershell
 $env:MONGODB_URI = 'mongodb://127.0.0.1:27017'
 $env:PYORM_NATIVE = 'required'
-.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output native-current.json
+.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output docs/benchmarks/native-current.json
 $env:PYORM_NATIVE = 'off'
-.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output python-current.json
-.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --documents 3000 --mutations 10 --max-pending 1 --size 1000 --captures 1 --rounds 5 --output queue-current.json
+.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output docs/benchmarks/python-current.json
+.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --documents 3000 --mutations 10 --max-pending 1 --size 1000 --captures 1 --rounds 5 --output docs/benchmarks/queue-current.json
 
 $env:PYORM_TEST_URI = $env:MONGODB_URI
 .\.venv\Scripts\python.exe -m pytest -q

@@ -16,7 +16,7 @@
 
 ## 实测结果
 
-2026-11-23，Windows 11 / Python 3.13.15 / MongoDB 8.0.4，独立的本机回环服务，`w=1`，默认 journaling。基线为提交 `975e865`，优化版为提交 `f660b45`。两个版本使用同一套测量脚本、同一服务，交替运行各 5 轮；以下为中位数。原始样本保存在 [优化前](../performance-before.json) 和 [优化后](../performance-after.json)。后续优化另见 [Rust 与调度优化报告](native-performance.md)。
+2026-11-23，Windows 11 / Python 3.13.15 / MongoDB 8.0.4，独立的本机回环服务，`w=1`，默认 journaling。基线为提交 `975e865`，优化版为提交 `f660b45`。两个版本使用同一套测量脚本、同一服务，交替运行各 5 轮；以下为中位数。原始样本保存在 [优化前](benchmarks/performance-before.json) 和 [优化后](benchmarks/performance-after.json)。后续优化另见 [Rust 与调度优化报告](native-performance.md)。
 
 | 测量项 | 优化前 | 优化后 | 前后耗时比 |
 | --- | ---: | ---: | ---: |
@@ -57,7 +57,7 @@
 
 ```powershell
 $env:MONGODB_URI = 'mongodb://127.0.0.1:27017'
-.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output performance-current.json
+.\.venv\Scripts\python.exe examples\benchmark_hot_paths.py --rounds 5 --output docs/benchmarks/performance-current.json
 
 $env:PYORM_TEST_URI = $env:MONGODB_URI
 .\.venv\Scripts\python.exe -m pytest -q

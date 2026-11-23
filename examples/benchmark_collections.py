@@ -90,7 +90,12 @@ def main():
     parser.add_argument("--batches", type=int, nargs="+", default=[1, 32])
     parser.add_argument("--iterations", type=int, default=100)
     parser.add_argument("--workers", type=int, default=1)
-    parser.add_argument("--output", type=Path, default=Path("collection-benchmark-results.json"))
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=Path(__file__).resolve().parents[1]
+        / "docs/benchmarks/collection-benchmark-results.json",
+    )
     args = parser.parse_args()
     if (
         args.iterations < 1
