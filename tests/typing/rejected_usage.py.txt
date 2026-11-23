@@ -1,0 +1,15 @@
+"""Calls the type checker must reject; this fixture is not executed."""
+from examples.quickstart import Pet, Player
+from pyorm import Document
+
+
+def invalid_usage() -> None:
+    pet = Pet.load(42)
+    pet.owner_id = 42
+    pet.stats = Player(id="player-1")
+    pet.stats.hp = "full"
+    pet.learn_skill(42)
+    pet.skills.append(42)
+    pet.position = ("x", "y")
+    document = Document[str]()
+    print(document)

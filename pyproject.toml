@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pyorm-mongo"
+version = "0.2.3"
+description = "Authoritative object cache with automatic incremental MongoDB persistence"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = ["pymongo>=4.9,<5"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "mongomock>=4.3,<5", "ruff>=0.14", "pyright>=1.1.400,<2"]
+
+[tool.setuptools.package-data]
+pyorm = ["py.typed"]
+
+[tool.setuptools.packages.find]
+include = ["pyorm*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["integration: requires a real MongoDB server"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+extend-exclude = [".venv*", ".tools", "build", "dist", ".agents/skills"]
+
+[tool.pyright]
+pythonVersion = "3.13"
+venvPath = "."
+venv = ".venv"
+include = ["pyorm/fields.py", "pyorm/model.py", "pyorm/manager.py", "pyorm/connection.py", "pyorm/query.py", "pyorm/runtime.py", "tests/typing", "examples/quickstart.py"]
+typeCheckingMode = "basic"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
