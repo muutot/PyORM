@@ -1,12 +1,44 @@
 """BSON conversion and conflict-free recursive update generation."""
 
 from collections.abc import Mapping
+from copy import deepcopy
 from enum import Enum
 
-from bson import BSON
+from bson import encode as encode_bson
 from bson.errors import InvalidDocument
 
 from .exceptions import ValidationError
+
+_SCALAR_TYPES = frozenset((str, int, float, bool, bytes, type(None)))
+
+
+def copy_bson[T](value: T, memo=None) -> T:
+    """Detach BSON trees cheaply, retaining deepcopy semantics for driver/custom values."""
+    kind = type(value)
+    if kind in _SCALAR_TYPES:
+        return value
+    if kind not in (dict, list):
+        return deepcopy(value, memo)
+    if memo is None:
+        memo = {}
+    identity = id(value)
+    if identity in memo:
+        return memo[identity]
+    if kind is list:
+        result = []
+        memo[identity] = result
+        result.extend(
+            item if type(item) in _SCALAR_TYPES else copy_bson(item, memo) for item in value
+        )
+    else:
+        result = {}
+        memo[identity] = result
+        for key, item in value.items():
+            result[copy_bson(key, memo)] = (
+                item if type(item) in _SCALAR_TYPES else copy_bson(item, memo)
+            )
+    # Only exact native lists/dicts take this branch; all subclasses use deepcopy.
+    return result  # pyright: ignore[reportReturnType]
 
 
 def key_name(key):
@@ -20,6 +52,8 @@ def key_name(key):
 
 
 def encode_value(value):
+    if type(value) in _SCALAR_TYPES:
+        return value
     if isinstance(value, Enum):
         return value.name
     if hasattr(value, "to_mongo"):
@@ -35,21 +69,23 @@ def encode_value(value):
     if isinstance(value, (set, frozenset)):
         values = [encode_value(item) for item in value]
         # Stable ordering means unchanged sets never generate spurious array updates.
-        return sorted(values, key=lambda item: BSON.encode({"v": item}))
+        return sorted(values, key=lambda item: encode_bson({"v": item}))
     if isinstance(value, (list, tuple)):
-        return [encode_value(item) for item in value]
+        return [item if type(item) in _SCALAR_TYPES else encode_value(item) for item in value]
     return value
 
 
 def validate_bson(document):
     try:
-        BSON.encode(document)
+        encode_bson(document)
     except (InvalidDocument, OverflowError, TypeError, ValueError) as exc:
         raise ValidationError(f"Document cannot be encoded as BSON: {exc}") from exc
 
 
 def collect_set_paths(value, path):
     """Locate set fields before BSON turns them into indistinguishable arrays."""
+    if type(value) in _SCALAR_TYPES:
+        return set()
     if isinstance(value, (set, frozenset)):
         return {path}
     paths = set()
@@ -77,8 +113,8 @@ def diff_documents(before, after, *, incremental_arrays=False, set_paths=()):
 
     def array_diff(old, new, path):
         if incremental_arrays and path in set_paths:
-            old_members = {BSON.encode({"v": item}): item for item in old}
-            new_members = {BSON.encode({"v": item}): item for item in new}
+            old_members = {encode_bson({"v": item}): item for item in old}
+            new_members = {encode_bson({"v": item}): item for item in new}
             removed = old_members.keys() - new_members.keys()
             if removed or len(old_members) != len(old):
                 sets[path] = new
@@ -90,11 +126,11 @@ def diff_documents(before, after, *, incremental_arrays=False, set_paths=()):
         elif (
             incremental_arrays
             and len(new) > len(old)
-            and BSON.encode({"v": old}) == BSON.encode({"v": new[: len(old)]})
+            and encode_bson({"v": old}) == encode_bson({"v": new[: len(old)]})
         ):
             append_values(old, new[len(old) :], path)
         # Python equates 1, True and 1.0 even inside arrays; BSON distinguishes them.
-        elif BSON.encode({"v": old}) != BSON.encode({"v": new}):
+        elif encode_bson({"v": old}) != encode_bson({"v": new}):
             sets[path] = new
 
     def walk(old, new, prefix):

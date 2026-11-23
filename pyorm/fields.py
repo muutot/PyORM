@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Self, overload
 
 from .exceptions import ValidationError
 from .serialization import encode_value, key_name
+from .tracking import track
 
 if TYPE_CHECKING:
     from .model import EmbeddedDocument
@@ -74,16 +75,13 @@ class Field[T = Any]:
             if changed is not None:
                 changed.before()
             self.validate(value)
-            if changed is not None:
-                from .tracking import track
-
-                # Tracked containers retain the declared native-container interface.
-                value = track(  # pyright: ignore[reportAssignmentType]
-                    value, instance._field_hook(self.name), instance._lock
-                )
-            instance._values[self.name] = value
-            if changed is not None:
-                instance._field_hook(self.name)()  # pyright: ignore[reportOptionalCall]
+            if changed is None:
+                instance._values[self.name] = value
+                return
+            hook = instance._field_hook(self.name)
+            # Tracked containers retain the declared native-container interface.
+            instance._values[self.name] = track(value, hook, instance._lock)
+            hook()  # pyright: ignore[reportOptionalCall]
 
     def __delete__(self, instance: EmbeddedDocument) -> None:
         with instance._lock:

@@ -47,4 +47,11 @@ Version-filtered retries must not replay acknowledged `$push` additions: confirm
 using the write receipt without reloading business data. Do not claim database cost from payload size
 alone; use real server measurements under the relevant workload.
 
+Capture detaches BSON values before deriving operators. The packet owns both its values and operator
+payloads; each database attempt receives a detached operator copy. On acknowledgement, the retired
+packet transfers its values to the snapshot without copying the complete tree again. Native scalar
+fast paths use exact types; driver values and custom subclasses retain deepcopy behavior. Repeated
+mutations keep the first flush deadline and wake scheduling only for new pending work, unblocking,
+or changed batch/interval settings. Write completion wakes scheduling for newer generations.
+
 Treat the current implementations and tests as authoritative; update this map when ownership changes.

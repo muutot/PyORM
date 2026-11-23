@@ -451,3 +451,137 @@ def test_workers_persist_different_documents_in_parallel(client, monkeypatch):
         manager.get(Player, second).coins = 2
         manager.wait_idle(5)
         assert len(set(threads)) == 2
+
+
+def test_repeated_mutations_keep_first_flush_deadline(client, monkeypatch):
+    seed(client)
+    written = threading.Event()
+    original = client.tests.players.update_one
+
+    def write(*args, **kwargs):
+        result = original(*args, **kwargs)
+        written.set()
+        return result
+
+    with Manager(client=client, database="tests", flush_interval=0.05) as manager:
+        player = manager.get(Player, 1)
+        monkeypatch.setattr(client.tests.players, "update_one", write)
+        stop = threading.Event()
+
+        def mutate():
+            value = 0
+            while not stop.wait(0.005):
+                value += 1
+                player.coins = value
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            job = pool.submit(mutate)
+            try:
+                assert written.wait(5)  # Writes while mutations continue, before shutdown.
+            finally:
+                stop.set()
+            job.result(5)
+        manager.wait_idle(5)
+        assert client.tests.players.find_one({"_id": 1})["coins"] == player.coins
+
+
+@pytest.mark.parametrize("setting", ["batch_size", "flush_interval"])
+def test_pending_mutation_wakes_dispatcher_after_schedule_setting_changes(
+    client, monkeypatch, setting
+):
+    seed(client)
+    waiting, written = threading.Event(), threading.Event()
+    original = client.tests.players.update_one
+    with Manager(client=client, database="tests", flush_interval=60) as manager:
+        player = manager.get(Player, 1)
+        original_wait = manager._condition.wait
+
+        def observe_wait(timeout=None):
+            waiting.set()
+            return original_wait(timeout)
+
+        def write(*args, **kwargs):
+            result = original(*args, **kwargs)
+            written.set()
+            return result
+
+        monkeypatch.setattr(manager._condition, "wait", observe_wait)
+        monkeypatch.setattr(client.tests.players, "update_one", write)
+        player.coins = 1
+        assert waiting.wait(5)
+        setattr(manager, setting, 1 if setting == "batch_size" else 0.01)
+        player.coins = 2
+        assert written.wait(5)
+        manager.wait_idle(5)
+        assert client.tests.players.find_one({"_id": 1})["coins"] == 2
+
+
+def test_queue_capacity_one_drains_all_documents_and_inflight_edits(client, monkeypatch):
+    for id in range(20):
+        seed(client, id)
+    entered, release = threading.Event(), threading.Event()
+    original = client.tests.players.update_one
+    writes = []
+
+    def write(query, update, **kwargs):
+        writes.append(query["_id"])
+        if len(writes) == 1:
+            entered.set()
+            assert release.wait(5)
+        return original(query, update, **kwargs)
+
+    with Manager(
+        client=client, database="tests", workers=4, max_pending=1, batch_size=1
+    ) as manager:
+        players = [manager.get(Player, id) for id in range(20)]
+        monkeypatch.setattr(client.tests.players, "update_one", write)
+        players[0].coins = 1
+        try:
+            assert entered.wait(5)
+            for player in players:
+                player.coins = 2
+            assert manager.stats["inflight"] == 1
+        finally:
+            release.set()
+        manager.wait_idle(5)
+        assert len(writes) == 21 and client.tests.players.count_documents({"coins": 2}) == 20
+        assert all(not player.is_dirty for player in players)
+
+
+def test_mutable_bson_leaf_is_detached_before_worker_and_acknowledgement(client, monkeypatch):
+    from bson import Code
+
+    class Script(Document):
+        script = Field(Code)
+
+    collection = client.tests.script
+    collection.insert_one({"_id": 1, "_orm_version": 1, "script": Code("return n", {"n": 0})})
+    entered, release = threading.Event(), threading.Event()
+    with Manager(client=client, database="tests", batch_size=1) as manager:
+        script = manager.get(Script, 1)
+        original = manager._persist
+        calls = []
+
+        def persist(document, packet):
+            calls.append(packet)
+            if len(calls) == 1:
+                entered.set()
+                assert release.wait(5)
+            return original(document, packet)
+
+        monkeypatch.setattr(manager, "_persist", persist)
+        value = Code("return n", {"n": 1})
+        script.script = value
+        try:
+            assert entered.wait(5)
+            value.scope["n"] = 2
+            script.script = value
+        finally:
+            release.set()
+        manager.wait_idle(5)
+        assert calls[0].update["$set"]["script"].scope == {"n": 1}
+        assert script.script.scope == collection.find_one({"_id": 1})["script"].scope == {"n": 2}
+        value.scope["n"] = 3
+        script.script = value
+        manager.wait_idle(5)
+        assert script.version == 4 and collection.find_one({"_id": 1})["script"].scope == {"n": 3}

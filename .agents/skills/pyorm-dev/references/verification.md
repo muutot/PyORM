@@ -22,6 +22,9 @@ For real MongoDB, set `PYORM_TEST_URI` to a disposable server and run pytest. In
 random `pyorm_test_*` databases and drop only their own databases. If starting a temporary mongod, bind
 to loopback, keep its data in the workspace, wait for readiness, and stop it in `finally`. Keep benchmarks
 separate from correctness verification and report environment and workload with performance claims.
+`examples/benchmark_hot_paths.py --rounds 5 --output performance-current.json` measures cache work,
+packet capture, and acknowledged MongoDB drains separately; capture timing is not server performance.
+Use the same isolated service and workload for comparisons, alternate versions, and retain all samples.
 
 Inspect the built wheel for package metadata, `pyorm/py.typed`, and successful isolated imports/type
 checks. If Windows denies overwriting old build metadata, stage the package sources, pyproject.toml,

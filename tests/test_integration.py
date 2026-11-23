@@ -241,3 +241,83 @@ def test_real_push_retry_confirms_receipt_without_duplicating_elements(real_orm,
     raw = collection.find_one({"_id": "pet-1"})
     assert raw["skills"] == ["old", "jump", "run"] and raw["_orm_version"] == 2
     assert len(raw["tags"]) == 3 and set(raw["tags"]) == {"rare", "trained", "young"}
+
+
+def test_real_sustained_concurrent_mutations_with_bounded_queue_and_lost_acks(
+    real_orm, monkeypatch
+):
+    from pymongo.errors import AutoReconnect
+
+    class Stress(Document[int]):
+        count = Field(int, default=0)
+        items = Field(list, default_factory=list)
+        data = Field(dict, default_factory=lambda: {"count": 0})
+        tags = Field(set, default_factory=set)
+
+        def reward(self, value):
+            self.count += 1
+            self.items.extend([value, -value])
+            self.data["count"] += 1
+            self.tags.add(str(value % 10))
+
+    collection = real_orm._collection(Stress)
+    collection.insert_many(
+        {
+            "_id": i,
+            "_orm_version": 1,
+            "count": 0,
+            "items": [],
+            "data": {"count": 0},
+            "tags": [],
+            "unknown": "preserved",
+        }
+        for i in range(16)
+    )
+    seen = set()
+    lost = []
+    lock = threading.Lock()
+    original = collection.update_one
+
+    def write(query, update, **kwargs):
+        result = original(query, update, **kwargs)
+        token = update["$set"]["_orm_write_token"]
+        with lock:
+            first = token not in seen
+            seen.add(token)
+            lose = first and len(seen) % 4 == 0
+            if lose:
+                lost.append(token)
+        if lose:
+            raise AutoReconnect("acknowledgement lost after successful server write")
+        return result
+
+    with Manager(
+        client=real_orm.client,
+        database=real_orm._database.name,
+        workers=8,
+        max_pending=2,
+        batch_size=3,
+        flush_interval=0.01,
+        retry_interval=0.01,
+        on_error=lambda *_: None,
+    ) as manager:
+        monkeypatch.setattr(manager._orm, "_collection", lambda _: collection)
+        documents = [manager.get(Stress, id) for id in range(16)]
+        monkeypatch.setattr(collection, "update_one", write)
+        with ThreadPoolExecutor(max_workers=16) as pool:
+            futures = [pool.submit(documents[value % 16].reward, value) for value in range(512)]
+            for future in futures:
+                future.result(10)
+        manager.wait_idle(15)
+        assert lost and not manager.errors
+        for id, document in enumerate(documents):
+            raw = collection.find_one({"_id": id})
+            expected = list(range(id, 512, 16))
+            assert raw["count"] == document.count == 32
+            assert raw["data"] == document.data == {"count": 32}
+            assert raw["items"] == document.items and len(raw["items"]) == 64
+            assert sorted(raw["items"][::2]) == expected
+            assert all(b == -a for a, b in zip(raw["items"][::2], raw["items"][1::2], strict=True))
+            assert set(raw["tags"]) == document.tags == {str(value % 10) for value in expected}
+            assert raw["unknown"] == "preserved" and raw["_orm_version"] == document.version
+            assert manager.get(Stress, id) is document and not document.is_dirty

@@ -2,6 +2,8 @@
 
 from functools import wraps
 
+_SCALAR_TYPES = frozenset((str, int, float, bool, bytes, type(None)))
+
 
 def mutation(method):
     @wraps(method)
@@ -18,6 +20,8 @@ def mutation(method):
 
 
 def track(value, changed, lock):
+    if type(value) in _SCALAR_TYPES:
+        return value
     if (
         isinstance(value, (TrackedDict, TrackedList, TrackedSet))
         and value._changed == changed

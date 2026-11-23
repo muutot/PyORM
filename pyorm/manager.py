@@ -8,12 +8,11 @@ import time
 import uuid
 from collections.abc import Callable
 from concurrent.futures import Future
-from copy import deepcopy
 from dataclasses import dataclass
 from types import TracebackType
 from typing import Any, Literal, Self
 
-from bson import BSON
+from bson import encode as encode_bson
 from pymongo.errors import ConnectionFailure
 
 from .connection import MongoORM
@@ -23,7 +22,7 @@ from .exceptions import (
     PersistenceError,
 )
 from .model import VERSION_FIELD, WRITE_TOKEN_FIELD, Document
-from .serialization import collect_set_paths, diff_documents, validate_bson
+from .serialization import collect_set_paths, copy_bson, diff_documents, validate_bson
 from .tracking import track
 from .types import BSONDocument, CacheKey, MongoUpdate
 
@@ -101,6 +100,8 @@ class Manager:
         self._closed = False
         self._stop = False
         self._forcing = 0
+        self._scheduled_batch_size = batch_size
+        self._scheduled_flush_interval = flush_interval
         self._thread = threading.Thread(target=self._dispatch, name="pyorm-manager", daemon=True)
         self._thread.start()
 
@@ -110,13 +111,14 @@ class Manager:
                 raise ConnectionClosedError("Manager is closing or closed")
 
     def _key(self, model: type[Document[Any]], id) -> CacheKey:
-        return self._orm.collection_name(model), BSON.encode({"_id": id})
+        return self._orm.collection_name(model), encode_bson({"_id": id})
 
     def get[T: Document[Any]](self, model: type[T], id) -> T:
         """Return the one cached instance; a missing document is initialized in memory."""
         key = self._key(model, id)
         with self._condition:
-            self._check_open()
+            if self._closing or self._closed:
+                raise ConnectionClosedError("Manager is closing or closed")
             registered = self._models.setdefault(key[0], model)
             if registered is not model:
                 raise TypeError("One collection must use one model type within a Manager")
@@ -169,11 +171,22 @@ class Manager:
     def _mark(self, doc: Document[Any]) -> None:
         with self._condition:
             key = doc._cache_key
-            self._pending.setdefault(key, time.monotonic())
-            if key not in self._inflight:
+            new = key not in self._pending
+            wake = (
+                new
+                or self.batch_size != self._scheduled_batch_size
+                or self.flush_interval != self._scheduled_flush_interval
+            )
+            if new:
+                self._pending[key] = time.monotonic()
+            if (self._blocked or self._errors) and key not in self._inflight:
+                wake = wake or key in self._blocked
                 self._blocked.discard(key)
                 self._errors.pop(key, None)
-            self._condition.notify_all()
+            # Repeated mutations retain the first deadline and queue position.
+            # Completion wakes the dispatcher for changes made during an active write.
+            if wake:
+                self._condition.notify_all()
 
     def _capture(self, doc: Document[Any]) -> WritePacket:
         with doc._lock:
@@ -196,9 +209,12 @@ class Manager:
                         field.validate(None)
                     removed.append(field.db_field)
             validate_bson(values)
+            # One detached tree owns both packet values and operator payloads.
+            # Even mutable BSON leaves returned by custom fields cannot follow cache edits.
+            values = copy_bson(values)
             update = diff_documents(before, values, incremental_arrays=True, set_paths=set_paths)
             return WritePacket(
-                deepcopy(values),
+                values,
                 tuple(removed),
                 generations,
                 doc._change_seq,
@@ -213,7 +229,7 @@ class Manager:
         try:
             if not packet.new and not packet.update:
                 return None
-            update = deepcopy(packet.update)
+            update = copy_bson(packet.update)
             update.setdefault("$set", {}).update(
                 {
                     VERSION_FIELD: packet.version,
@@ -277,7 +293,9 @@ class Manager:
                 if packet.new or packet.update:
                     doc._version = packet.version
                     doc._persisted = True
-                    doc._snapshot.update(deepcopy(packet.values))
+                    # The completed packet is retired here. Transfer its detached
+                    # values to the acknowledged snapshot without another full-tree copy.
+                    doc._snapshot.update(packet.values)
                     for name in packet.removed:
                         doc._snapshot.pop(name, None)
                 doc._acked_seq = max(doc._acked_seq, packet.revision)
@@ -321,6 +339,12 @@ class Manager:
             with self._condition:
                 if self._stop:
                     return
+                self._scheduled_batch_size = self.batch_size
+                self._scheduled_flush_interval = self.flush_interval
+                slots = self._capacity - len(self._inflight)
+                if slots <= 0:
+                    self._condition.wait()
+                    continue
                 now = time.monotonic()
                 candidates = [
                     key
@@ -336,7 +360,6 @@ class Manager:
                     or key in self._retry_at
                     or self._pending[key] + self.flush_interval <= now
                 ]
-                slots = self._capacity - len(self._inflight)
                 ready = ready[: max(0, slots)]
                 if not ready:
                     deadlines = [

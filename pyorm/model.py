@@ -7,7 +7,6 @@ import threading
 from collections.abc import Iterator, Sequence
 from concurrent.futures import Future
 from contextlib import contextmanager
-from copy import deepcopy
 from enum import Enum
 from functools import wraps
 from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
@@ -17,7 +16,7 @@ from pymongo import IndexModel
 
 from .exceptions import ConcurrentModificationError, ValidationError
 from .fields import MISSING, Field
-from .serialization import diff_documents, validate_bson
+from .serialization import copy_bson, diff_documents, validate_bson
 from .types import BSONDocument, CacheKey, ChangeNotifier, MongoUpdate
 
 if TYPE_CHECKING:
@@ -124,14 +123,14 @@ class EmbeddedDocument(metaclass=ModelMeta):
 
     def to_mongo(self) -> BSONDocument:
         with self._lock:
-            data = deepcopy(self._extra)
+            data = copy_bson(self._extra)
             for name, field in self._fields.items():
                 if name in self._values:
                     data[field.db_field] = field.to_mongo(self._values[name])
                 elif field.required:
                     raise ValidationError(f"Field {name!r} is required")
             validate_bson(data)
-            return deepcopy(data)
+            return copy_bson(data)
 
     @classmethod
     def from_mongo(cls, data: BSONDocument) -> Self:
@@ -139,10 +138,10 @@ class EmbeddedDocument(metaclass=ModelMeta):
         instance = cls.__new__(cls)
         EmbeddedDocument.__init__(instance)
         names = {field.db_field for field in cls._fields.values()}
-        instance._extra = deepcopy({k: v for k, v in data.items() if k not in names})
+        instance._extra = copy_bson({k: v for k, v in data.items() if k not in names})
         for name, field in cls._fields.items():
             if field.db_field in data:
-                setattr(instance, name, field.from_mongo(deepcopy(data[field.db_field])))
+                setattr(instance, name, field.from_mongo(copy_bson(data[field.db_field])))
         return instance
 
     def __repr__(self) -> str:
@@ -227,7 +226,7 @@ class Document[ID = ObjectId](EmbeddedDocument):
         instance._version = version
         instance._persisted = True
         instance._deleted = False
-        instance._snapshot = deepcopy(payload)
+        instance._snapshot = copy_bson(payload)
         instance._orm = orm
         instance._manager = None
         return instance
@@ -278,7 +277,7 @@ class Document[ID = ObjectId](EmbeddedDocument):
                         )
                     self._version += 1
                 # Only acknowledge the snapshot after an acknowledged database write.
-                self._snapshot = deepcopy(data)
+                self._snapshot = copy_bson(data)
                 self._orm = engine
                 return self
 
