@@ -1,4 +1,4 @@
-# 字段校验与 0.2.3 升级
+# 字段校验与 0.3.0 升级
 
 `_autosave` 将普通类属性转换为字段，并在构造、赋值、BSON 恢复和序列化边界校验类型。嵌套 EmbeddedDocument 使用相同规则。显式 `Field`、`EmbeddedField`、`ListField` 自动注册，其参数优先于类注解。
 

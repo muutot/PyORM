@@ -4,12 +4,12 @@
 
 ## 触发方式
 
-推送 `vX.Y.Z` 标签自动发布；标签与包版本不一致时立即失败。例如包版本为 `0.2.3` 时，标签必须为 `v0.2.3`。准备好版本与提交后执行：
+推送 `vX.Y.Z` 标签自动发布；标签与包版本不一致时立即失败。例如包版本为 `0.3.0` 时，标签必须为 `v0.3.0`。准备好版本与提交后执行：
 
 ```powershell
 git push origin main
-git tag v0.2.3
-git push origin v0.2.3
+git tag v0.3.0
+git push origin v0.3.0
 ```
 
 需要升级版本时，先更新 `pyproject.toml`，完成验证并提交，再创建对应标签。发布工作流不会自动修改版本、创建标签或提交代码。
@@ -34,7 +34,7 @@ git push origin v0.2.3
 从 Release 下载匹配的 wheel 后安装：
 
 ```powershell
-uv pip install --python .\.venv\Scripts\python.exe --link-mode copy .\pyorm_mongo-0.2.3-py3-none-any.whl
+uv pip install --python .\.venv\Scripts\python.exe --link-mode copy .\pyorm_mongo-0.3.0-py3-none-any.whl
 ```
 
 使用 Rust 时下载匹配 Python、系统与架构的原生 wheel；可在导入前设置 `PYORM_NATIVE=required`，让缺少或加载失败的扩展明确报错。运行模式说明见 [README](../README.md)。
@@ -53,3 +53,7 @@ uv pip install --python .\.venv\Scripts\python.exe --link-mode copy .\pyorm_mong
 构建失败不会创建公开 Release，可在修复原因后重跑任务。附件上传或最后发布失败时，可能留下草稿；同一标签重跑会更新草稿附件再发布。已公开的同名 Release 会让发布步骤失败，避免覆盖既有发布；不要通过移动标签来替换已发布版本。
 
 工作流使用 GitHub 提供的 `GITHUB_TOKEN`，仅发布 job 拥有 `contents: write`，构建 job 保持只读。Actions 引用固定提交。这里的发布目标是 GitHub Release；没有配置 PyPI 上传。
+
+## 版本说明
+
+[v0.3.0](release-notes/0.3.0.md) 收紧 `_autosave` 字段校验，并新增托管文档删除和显式缓存释放。升级前请检查历史字段类型及非 Optional 注解字段中的 null。

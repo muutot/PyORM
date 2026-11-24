@@ -326,6 +326,8 @@ Remove-Item Env:PYORM_NATIVE
 
 [发布工作流](.github/workflows/release.yml) 在推送 `vX.Y.Z` 标签时构建并发布 GitHub Release，标签必须与 `pyproject.toml` 中的版本一致。Actions 页面手动运行只构建和保存产物。
 
+[v0.3.0 发布说明](docs/release-notes/0.3.0.md) 包含字段校验的兼容性变化、托管删除和显式缓存释放；从 0.2.3 升级前请检查历史数据类型。
+
 全部发布产物由 Actions 构建，包含纯 Python wheel、源码包，以及 CPython 3.13 / 3.14 的 Windows x64、Linux x64（manylinux 2.28）、macOS ARM64 Rust wheel。Rust 使用最高常规优化等级、完整 LTO、单 codegen unit，保留 panic 展开与通用架构兼容性。发布前检查格式、类型、两种后端的真实 MongoDB 测试及安装包测试，附件包含 `SHA256SUMS`。触发方法、平台范围及失败重跑见 [发布说明](docs/releases.md)。
 
 ### 数据库为瓶颈时的数组更新
