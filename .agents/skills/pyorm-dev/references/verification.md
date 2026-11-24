@@ -31,8 +31,11 @@ separate from correctness verification and report environment and workload with 
 packet capture, and acknowledged MongoDB drains separately; capture timing is not server performance.
 Use the same isolated service and workload for comparisons, alternate versions, and retain all samples.
 
-Scalar/default regressions live in `tests/test_autosave_validation.py`; annotation signatures
-are also checked in `tests/typing`.
+Lifecycle regressions in `tests/test_manager_lifecycle.py` run the same assertions against mock and
+real clients; real parameters carry the integration mark. Include in-flight release/delete, concurrent
+get, uncertain push receipts, stale references, timeout recovery and close/deletion in real-server
+verification. Scalar/default regressions live in `tests/test_autosave_validation.py`; annotation and
+public lifecycle signatures are also checked in `tests/typing`.
 
 For native changes, run the complete suite with PYORM_NATIVE=required and off, including real MongoDB.
 Verify differential BSON ordering/type comparisons, alias/cycle copying, callback failures/mutations,

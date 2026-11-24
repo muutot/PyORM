@@ -4,6 +4,7 @@ from .connection import MongoORM
 from .exceptions import (
     ConcurrentModificationError,
     ConnectionClosedError,
+    DocumentInactiveError,
     ManagerNotInitializedError,
     ORMError,
     PersistenceError,
@@ -35,5 +36,6 @@ __all__ = [
     "ValidationError",
     "ConcurrentModificationError",
     "ConnectionClosedError",
+    "DocumentInactiveError",
     "QueueFullError",
 ]

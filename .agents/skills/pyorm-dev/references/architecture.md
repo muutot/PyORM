@@ -19,7 +19,13 @@ the manager schedules persistence when dirty-document count reaches `batch_size`
 expires. `shutdown()` drains persistence at the application boundary. Business methods need no manual
 submit/flush/reload calls.
 
-Within one Manager lifetime, each model/id has one cached instance, loaded in full on first access.
+Within one Manager, each model/id has one active cached instance, loaded in full on first access.
+Explicit release/delete ends that instance's ownership; concurrent gets wait for retirement, then
+share a new load. Old scalar/container/embedded references reject writes with DocumentInactiveError.
+Release flushes by default; discard=True and deletion cancel unsent changes only after existing
+uncertain packets settle. Deletion checks the acknowledged version and write token; conflicts retain
+cache, confirmed absence retires it. Collection/model registration lasts for the Manager lifetime.
+There is no automatic eviction. Lifecycle operations run outside held document locks and workers.
 Later writes update changed paths. Acknowledgements must never overwrite newer cache values. Failed
 writes retain pending state; shutdown failures remain visible. This ownership contract assumes writers
 use the same manager; it does not establish cross-process cache coherence or track external DB edits.
@@ -46,7 +52,8 @@ constructors. Tracked containers deepcopy to independent builtin values; root Do
 Union annotations involving set/frozenset/tuple/Enum restoration require one non-null concrete type;
 mixed non-null targets require a custom Field codec and fail at class declaration.
 The stricter scalar behavior requires legacy-data migration; see
-[field validation](../../../../docs/field-validation.md).
+[field validation](../../../../docs/field-validation.md) and
+[cache lifecycle](../../../../docs/lifecycle.md).
 
 `Document[ID]` declares identifier types (ObjectId by default). Model class methods use Self;
 Manager, Repository, QuerySet, and Future preserve concrete models. String-ID examples use Document[str].

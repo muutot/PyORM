@@ -17,6 +17,10 @@ class ConnectionClosedError(ORMError, RuntimeError):
     pass
 
 
+class DocumentInactiveError(ORMError, RuntimeError):
+    """A managed document is being retired, or was explicitly released/deleted."""
+
+
 class QueueFullError(ORMError):
     pass
 

@@ -1,8 +1,10 @@
 # ORM source
 
 Read the pyorm-dev architecture reference before behavior changes. Keep a shared MongoClient pool,
-one cached model/id per Manager lifetime, generation-aware acknowledgements, and incremental writes.
-Do not reload business data after acknowledgements or silently discard failed writes. Keep root lock
+one active cached model/id, generation-aware acknowledgements, and incremental writes. Explicit
+release/delete invalidates old references and serializes concurrent gets; collection/model registration
+lasts for the Manager lifetime. Do not reload business data after acknowledgements or silently discard
+failed writes. Explicit discard/delete waits for uncertain packets before retiring. Keep root lock
 ownership consistent for nested values and do not hold manager scheduling locks across network I/O.
 
 All explicit Field subclasses auto-register; `_autosave` infers top-level types from annotations/defaults.

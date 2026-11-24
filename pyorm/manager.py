@@ -6,20 +6,23 @@ import logging
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import Future
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from itertools import islice
 from types import TracebackType
 from typing import Any, Literal, Self
 
 from bson import encode as encode_bson
+from pymongo import timeout as mongo_timeout
 from pymongo.errors import ConnectionFailure
 
 from .connection import MongoORM
 from .exceptions import (
     ConcurrentModificationError,
     ConnectionClosedError,
+    DocumentInactiveError,
     PersistenceError,
 )
 from .model import VERSION_FIELD, WRITE_TOKEN_FIELD, Document
@@ -32,18 +35,45 @@ logger = logging.getLogger(__name__)
 
 @dataclass(frozen=True)
 class ChangeHook:
-    manager: Manager
     document: Document[Any]
     field: str
 
+    def _owner(self) -> Manager:
+        manager = self.document._manager
+        if manager is None:
+            raise DocumentInactiveError(
+                f"Document {self.document.id!r} was {self.document._retired}"
+            )
+        return manager
+
     def before(self) -> None:
-        self.manager._check_open()
+        self._owner()._check_mutable(self.document)
 
     def __call__(self) -> None:
         doc = self.document
         doc._change_seq += 1
         doc._dirty_fields[self.field] = doc._change_seq
-        self.manager._mark(doc)
+        self._owner()._mark(doc)
+
+
+@dataclass
+class Retirement:
+    flush: bool
+    completed: Future[None]
+
+
+@contextmanager
+def _retirement_lock(doc: Document[Any], deadline: float | None) -> Iterator[None]:
+    if deadline is None:
+        acquired = doc._lock.acquire()
+    else:
+        acquired = doc._lock.acquire(timeout=max(0, deadline - time.monotonic()))
+    if not acquired:
+        raise TimeoutError("Document is still executing a synchronized operation")
+    try:
+        yield
+    finally:
+        doc._lock.release()
 
 
 @dataclass
@@ -90,6 +120,7 @@ class Manager:
         self._close_lock = threading.Lock()
         self._cache: dict[CacheKey, Document[Any]] = {}
         self._loads: dict[CacheKey, Future[Document[Any]]] = {}
+        self._retiring: dict[CacheKey, Retirement] = {}
         self._models: dict[str, type[Document[Any]]] = {}
         self._pending: dict[CacheKey, float] = {}
         self._inflight: set[CacheKey] = set()
@@ -114,22 +145,43 @@ class Manager:
     def _key(self, model: type[Document[Any]], id) -> CacheKey:
         return self._orm.collection_name(model), encode_bson({"_id": id})
 
-    def get[T: Document[Any]](self, model: type[T], id) -> T:
-        """Return the one cached instance; a missing document is initialized in memory."""
-        key = self._key(model, id)
+    def _check_mutable(self, doc: Document[Any]) -> None:
         with self._condition:
             if self._closing or self._closed:
                 raise ConnectionClosedError("Manager is closing or closed")
-            registered = self._models.setdefault(key[0], model)
-            if registered is not model:
-                raise TypeError("One collection must use one model type within a Manager")
-            if key in self._cache:
-                # Collection registration above guarantees the cached model type.
-                return self._cache[key]  # pyright: ignore[reportReturnType]
-            future = self._loads.get(key)
-            owner = future is None
-            if future is None:
-                future = self._loads[key] = Future()
+            if doc._cache_key in self._retiring:
+                raise DocumentInactiveError(f"Document {doc.id!r} is being released or deleted")
+
+    def get[T: Document[Any]](self, model: type[T], id) -> T:
+        """Return the one cached instance; a missing document is initialized in memory."""
+        key = self._key(model, id)
+        while True:
+            with self._condition:
+                if self._closing or self._closed:
+                    raise ConnectionClosedError("Manager is closing or closed")
+                registered = self._models.setdefault(key[0], model)
+                if registered is not model:
+                    raise TypeError("One collection must use one model type within a Manager")
+                retiring = self._retiring.get(key)
+                if retiring is not None:
+                    cached = self._cache.get(key)
+                    if cached is not None and cached._lock._is_owned():  # pyright: ignore[reportAttributeAccessIssue]
+                        raise DocumentInactiveError(
+                            "Cannot wait for document retirement while holding its lock"
+                        )
+                    if threading.current_thread() is self._thread or self._orm._executor.in_worker:
+                        raise RuntimeError("A Manager worker cannot wait for document retirement")
+                if retiring is None:
+                    if key in self._cache:
+                        # Collection registration guarantees the cached model type.
+                        return self._cache[key]  # pyright: ignore[reportReturnType]
+                    future = self._loads.get(key)
+                    owner = future is None
+                    if future is None:
+                        future = self._loads[key] = Future()
+                    break
+            # Wait outside scheduling locks, then join the ordinary shared load.
+            retiring.completed.result()
         if not owner:
             # The same registered model type also owns the shared loading Future.
             return future.result()  # pyright: ignore[reportReturnType]
@@ -161,13 +213,123 @@ class Manager:
         doc._change_seq = 0
         doc._acked_seq = 0
         doc._dirty_fields = {}
-        doc._hooks = {name: ChangeHook(self, doc, name) for name in doc._fields}
-        doc._on_change = ChangeHook(self, doc, "")
+        doc._hooks = {name: ChangeHook(doc, name) for name in doc._fields}
+        doc._on_change = ChangeHook(doc, "")
         for name, field in doc._fields.items():
             if name in doc._values:
                 doc._values[name] = track(doc._values[name], doc._hooks[name], doc._lock)
                 if not doc._persisted or field.db_field not in doc._snapshot:
                     doc._dirty_fields[name] = 0
+
+    def release[ID](
+        self,
+        document: Document[ID],
+        *,
+        discard: bool = False,
+        timeout: float | None = 10.0,
+    ) -> bool:
+        """Flush and retire one cached instance; discard=True explicitly cancels pending edits."""
+        return self._retire(document, delete=False, discard=discard, timeout=timeout)
+
+    def delete[ID](self, document: Document[ID], *, timeout: float | None = 10.0) -> bool:
+        """Version-check deletion, then retire the instance and cancel its unsent edits."""
+        return self._retire(document, delete=True, discard=True, timeout=timeout)
+
+    def _retire(
+        self,
+        doc: Document[Any],
+        *,
+        delete: bool,
+        discard: bool,
+        timeout: float | None,
+    ) -> bool:
+        state = "deleted" if delete else "released"
+        if doc._retired == state:
+            return False
+        doc._check_active()
+        if threading.current_thread() is self._thread or self._orm._executor.in_worker:
+            raise RuntimeError("A Manager worker cannot retire documents")
+        if doc._lock._is_owned():  # pyright: ignore[reportAttributeAccessIssue]
+            raise RuntimeError("Release/delete must be called outside a held document lock")
+        if timeout is not None and timeout < 0:
+            raise ValueError("timeout must be nonnegative or None")
+        deadline = None if timeout is None else time.monotonic() + timeout
+        retirement = Retirement(flush=not discard, completed=Future())
+        with _retirement_lock(doc, deadline), self._condition:
+            if doc._retired == state:
+                return False
+            doc._check_active()
+            self._check_open()
+            if doc._manager is not self or self._cache.get(doc._cache_key) is not doc:
+                raise ValueError("Document is not an active cached instance of this Manager")
+            key = doc._cache_key
+            if key in self._retiring:
+                raise DocumentInactiveError(f"Document {doc.id!r} is already being retired")
+            self._retiring[key] = retirement
+            self._condition.notify_all()
+        try:
+            with self._condition:
+                # An uncertain existing packet must finish even for discard/delete.
+                # New captures are suppressed in these modes; release drains all edits.
+                while (
+                    key in self._inflight
+                    or key in self._packets
+                    or (retirement.flush and key in self._pending)
+                ):
+                    if key in self._blocked:
+                        raise PersistenceError(
+                            f"Cached document {key[0]} could not be persisted before release"
+                        ) from self._errors[key]
+                    remaining = None if deadline is None else deadline - time.monotonic()
+                    if remaining is not None and remaining <= 0:
+                        raise TimeoutError("Document still has unacknowledged cached changes")
+                    self._condition.wait(remaining)
+            deleted = False
+            if delete:
+                with _retirement_lock(doc, deadline):
+                    persisted = doc._persisted
+                    query = doc._version_filter()
+                    # The receipt also distinguishes a recreated id at the same version.
+                    query[WRITE_TOKEN_FIELD] = doc._write_token
+                if persisted:
+                    remaining = None if deadline is None else deadline - time.monotonic()
+                    if remaining is not None and remaining <= 0:
+                        raise TimeoutError("Document deletion did not start before timeout")
+                    collection = self._orm._collection(type(doc))
+                    with mongo_timeout(remaining) if remaining is not None else nullcontext():
+                        result = self._orm._run(collection.delete_one, query)
+                        deleted = result.deleted_count == 1
+                        if (
+                            not deleted
+                            and self._orm._run(collection.find_one, {"_id": doc.id}, {"_id": 1})
+                            is not None
+                        ):
+                            raise ConcurrentModificationError(
+                                f"Document {doc.id!r} changed before deletion; cache retained"
+                            )
+            # Once deletion is acknowledged, completing local retirement cannot
+            # be cancelled by a late timeout and reactivate the deleted document.
+            with _retirement_lock(doc, None if delete else deadline), self._condition:
+                self._cache.pop(key)
+                self._pending.pop(key, None)
+                self._packets.pop(key, None)
+                self._retry_at.pop(key, None)
+                self._errors.pop(key, None)
+                self._blocked.discard(key)
+                doc._retired = state
+                doc._deleted = delete
+                doc._dirty_fields.clear()
+                doc._hooks.clear()
+                doc._snapshot = {}
+                doc._manager = None
+                doc._orm = None
+                # Collection/model registration is a Manager-lifetime contract.
+            return deleted if delete else True
+        finally:
+            with self._condition:
+                self._retiring.pop(key)
+                retirement.completed.set_result(None)
+                self._condition.notify_all()
 
     def _mark(self, doc: Document[Any]) -> None:
         with self._condition:
@@ -271,7 +433,8 @@ class Manager:
                 )
             if result.matched_count == 0 and result.upserted_id is None:
                 raise ConcurrentModificationError(
-                    f"{type(doc).__name__} {doc.id!r} has an external writer; cache retained"
+                    f"{type(doc).__name__} {doc.id!r} changed or was deleted externally; "
+                    "cache retained"
                 )
             return None
         except Exception as exc:
@@ -294,6 +457,7 @@ class Manager:
                 if packet.new or packet.update:
                     doc._version = packet.version
                     doc._persisted = True
+                    doc._write_token = packet.token
                     # The completed packet is retired here. Transfer its detached
                     # values to the acknowledged snapshot without another full-tree copy.
                     doc._snapshot.update(packet.values)
@@ -350,7 +514,13 @@ class Manager:
                 candidates = (
                     key
                     for key in self._pending
-                    if key not in self._inflight and key not in self._blocked
+                    if key not in self._inflight
+                    and key not in self._blocked
+                    and (
+                        key not in self._retiring
+                        or self._retiring[key].flush
+                        or key in self._packets
+                    )
                 )
                 eligible = (key for key in candidates if self._retry_at.get(key, 0) <= now)
                 if self._forcing:
@@ -370,16 +540,25 @@ class Manager:
                             key
                             for key in batch
                             if key in self._retry_at
+                            or key in self._retiring
                             or self._pending[key] + self.flush_interval <= now
                         ][:slots]
                 if not ready:
                     deadlines = [
                         self._retry_at.get(
                             key,
-                            now if self._forcing else self._pending[key] + self.flush_interval,
+                            now
+                            if self._forcing or key in self._retiring
+                            else self._pending[key] + self.flush_interval,
                         )
                         for key in self._pending
-                        if key not in self._inflight and key not in self._blocked
+                        if key not in self._inflight
+                        and key not in self._blocked
+                        and (
+                            key not in self._retiring
+                            or self._retiring[key].flush
+                            or key in self._packets
+                        )
                     ]
                     timeout = max(0.001, min(deadlines) - now) if deadlines and slots else None
                     self._condition.wait(timeout)
@@ -421,6 +600,8 @@ class Manager:
                 "pending": len(self._pending),
                 "inflight": len(self._inflight),
                 "errors": len(self._errors),
+                "loading": len(self._loads),
+                "retiring": len(self._retiring),
             }
 
     @property
@@ -437,9 +618,12 @@ class Manager:
             self._forcing += 1
             self._condition.notify_all()
             try:
-                while self._pending or self._inflight or self._loads:
-                    if self._blocked:
-                        key = next(iter(self._blocked))
+                while self._pending or self._inflight or self._loads or self._retiring:
+                    blocked = next(
+                        (key for key in self._blocked if key not in self._retiring), None
+                    )
+                    if blocked is not None:
+                        key = blocked
                         raise PersistenceError(
                             f"Cached document {key[0]} could not be persisted"
                         ) from self._errors[key]
@@ -458,9 +642,13 @@ class Manager:
                 if self._closed:
                     return
                 self._closing = True
-                if not self._condition.wait_for(lambda: not self._loads, timeout):
+                self._condition.notify_all()
+                if not self._condition.wait_for(
+                    lambda: not self._loads and not self._retiring, timeout
+                ):
                     self._closing = False
-                    raise TimeoutError("Manager is still loading documents")
+                    self._condition.notify_all()
+                    raise TimeoutError("Manager is still loading or retiring documents")
                 documents = list(self._cache.values())
             # Set closing first, then let attribute assignments already holding a lock finish.
             for doc in documents:
@@ -471,6 +659,7 @@ class Manager:
             except BaseException:
                 with self._condition:
                     self._closing = False
+                    self._condition.notify_all()
                 raise
             with self._condition:
                 self._stop = True

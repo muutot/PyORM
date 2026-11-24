@@ -17,6 +17,7 @@ from typing import (
     Annotated,
     Any,
     ClassVar,
+    Literal,
     Self,
     Union,
     get_args,
@@ -28,7 +29,7 @@ from typing import (
 from bson import ObjectId
 from pymongo import IndexModel
 
-from .exceptions import ConcurrentModificationError, ValidationError
+from .exceptions import ConcurrentModificationError, DocumentInactiveError, ValidationError
 from .fields import MISSING, EmbeddedField, Field
 from .serialization import copy_bson, diff_documents, validate_bson
 from .types import BSONDocument, CacheKey, ChangeNotifier, MongoUpdate
@@ -289,6 +290,8 @@ class Document[ID = ObjectId](EmbeddedDocument):
         self._version = 0
         self._persisted = False
         self._deleted = False
+        self._retired: Literal["released", "deleted"] | None = None
+        self._write_token: str | None = None
         self._snapshot: BSONDocument = {}
         self._orm: MongoORM | None = None
         self._manager: Manager | None = None
@@ -307,6 +310,8 @@ class Document[ID = ObjectId](EmbeddedDocument):
 
     @property
     def is_dirty(self) -> bool:
+        if self._retired is not None:
+            return False
         if self._manager is not None:
             with self._lock:
                 return not self._persisted or bool(self._dirty_fields)
@@ -338,6 +343,8 @@ class Document[ID = ObjectId](EmbeddedDocument):
         instance._version = version
         instance._persisted = True
         instance._deleted = False
+        instance._retired = None
+        instance._write_token = data.get(WRITE_TOKEN_FIELD)
         instance._snapshot = copy_bson(payload)
         instance._orm = orm
         instance._manager = None
@@ -345,7 +352,13 @@ class Document[ID = ObjectId](EmbeddedDocument):
 
     def pending_update(self) -> MongoUpdate:
         with self._lock:
+            if self._retired is not None:
+                return {}
             return diff_documents(self._snapshot, self._data())
+
+    def _check_active(self) -> None:
+        if self._retired is not None:
+            raise DocumentInactiveError(f"Document {self.id!r} was {self._retired}")
 
     def _version_filter(self) -> BSONDocument:
         query: BSONDocument = {"_id": self.id, VERSION_FIELD: self.version}
@@ -355,20 +368,24 @@ class Document[ID = ObjectId](EmbeddedDocument):
         return query
 
     def _engine(self, orm: MongoORM | None = None) -> MongoORM:
-        engine = orm if orm is not None else self._orm
-        if engine is None:
-            raise RuntimeError("Use orm.repository(Model).new() or pass orm= to save()")
-        if self._orm is not None and engine is not self._orm:
-            raise RuntimeError("A document cannot be moved between ORM connections")
-        return engine
+        with self._lock:
+            self._check_active()
+            engine = orm if orm is not None else self._orm
+            if engine is None:
+                raise RuntimeError("Use orm.repository(Model).new() or pass orm= to save()")
+            if self._orm is not None and engine is not self._orm:
+                raise RuntimeError("A document cannot be moved between ORM connections")
+            return engine
 
     def save(self, *, orm: MongoORM | None = None) -> Self:
+        self._check_active()
         if self._manager is not None:
             raise RuntimeError("Managed documents are persisted automatically by their Manager")
         engine = self._engine(orm)
 
         def perform() -> Self:
             with self._lock:
+                self._check_active()
                 if self._deleted:
                     raise RuntimeError("Deleted documents cannot be saved again")
                 collection = engine._collection(type(self))
@@ -396,6 +413,7 @@ class Document[ID = ObjectId](EmbeddedDocument):
         return engine._run(perform)
 
     def save_async(self, *, orm: MongoORM | None = None) -> Future[Self]:
+        self._check_active()
         if self._manager is not None:
             raise RuntimeError("Managed documents are persisted automatically by their Manager")
         engine = self._engine(orm)
@@ -404,12 +422,14 @@ class Document[ID = ObjectId](EmbeddedDocument):
         )
 
     def reload(self) -> Self:
+        self._check_active()
         if self._manager is not None:
             raise RuntimeError("Managed cache is authoritative and must not be replaced by reload")
         engine = self._engine()
 
         def perform() -> Self:
             with self._lock:
+                self._check_active()
                 raw = engine._collection(type(self)).find_one({"_id": self.id})
                 if raw is None:
                     raise ConcurrentModificationError(f"Document {self.id!r} no longer exists")
@@ -424,13 +444,19 @@ class Document[ID = ObjectId](EmbeddedDocument):
 
         return engine._run(perform)
 
-    def delete(self) -> bool:
-        if self._manager is not None:
-            raise RuntimeError("Direct deletion of a managed cache document is not supported")
+    def delete(self, *, timeout: float | None = 10.0) -> bool:
+        """Delete through the owning Manager, or the explicit repository connection."""
+        if self._retired == "deleted":
+            return False
+        self._check_active()
+        manager = self._manager
+        if manager is not None:
+            return manager.delete(self, timeout=timeout)
         engine = self._engine()
 
         def perform() -> bool:
             with self._lock:
+                self._check_active()
                 if not self.is_persisted:
                     return False
                 result = engine._collection(type(self)).delete_one(self._version_filter())

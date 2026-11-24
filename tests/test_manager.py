@@ -274,7 +274,7 @@ def test_partial_container_mutation_is_tracked_even_when_operation_raises(client
 def test_direct_persistence_and_reload_are_rejected_for_managed_cache(client):
     with Manager(client=client, database="tests") as manager:
         player = manager.get(Player, 1)
-        for operation in (player.save, player.save_async, player.reload, player.delete):
+        for operation in (player.save, player.save_async, player.reload):
             with pytest.raises(RuntimeError):
                 operation()
 
