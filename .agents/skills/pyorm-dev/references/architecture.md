@@ -35,6 +35,19 @@ explicit Field subclass auto-registers without an `_autosave` entry. `EmbeddedFi
 overrides this behavior; use a factory for constructors that need arguments. Class descriptor access
 retains EmbeddedField; instance access yields the declared type. `py.typed` ships in the wheel.
 
+Autosave annotations declare runtime top-level types, including optional/union and concrete embedded
+types; otherwise infer builtin scalar/container types or the embedded/enum class from defaults.
+Unannotated defaults retain nullable=True; None/missing stays dynamic. Numeric types reject bool unless
+explicitly allowed; float does not coerce/accept int. Explicit Field parameters remain authoritative.
+Postponed/local annotations resolve at class declaration, not on mutations. Element generics remain
+editor hints unless an item Field is supplied. Embedded template deepcopy copies field/extra state
+with fresh locks and no ownership hooks, preserving Python defaults without running factories or
+constructors. Tracked containers deepcopy to independent builtin values; root Documents reject deepcopy.
+Union annotations involving set/frozenset/tuple/Enum restoration require one non-null concrete type;
+mixed non-null targets require a custom Field codec and fail at class declaration.
+The stricter scalar behavior requires legacy-data migration; see
+[field validation](../../../../docs/field-validation.md).
+
 `Document[ID]` declares identifier types (ObjectId by default). Model class methods use Self;
 Manager, Repository, QuerySet, and Future preserve concrete models. String-ID examples use Document[str].
 Use meaningful method types for editor assistance. Leave dynamic keyword forwarding unannotated rather

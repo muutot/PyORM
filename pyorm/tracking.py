@@ -1,5 +1,6 @@
 """Native containers that notify their owning field after in-place mutations."""
 
+from copy import deepcopy
 from functools import wraps
 
 _SCALAR_TYPES = frozenset((str, int, float, bool, bytes, type(None)))
@@ -49,6 +50,13 @@ class TrackedDict(dict):
         self._changed, self._lock = changed, lock
         super().__init__((key, track(item, changed, lock)) for key, item in value.items())
 
+    def __deepcopy__(self, memo):
+        with self._lock:
+            result = {}
+            memo[id(self)] = result
+            result.update((deepcopy(key, memo), deepcopy(item, memo)) for key, item in self.items())
+            return result
+
     @mutation
     def __setitem__(self, key, value):
         return super().__setitem__(key, track(value, self._changed, self._lock))
@@ -89,6 +97,13 @@ class TrackedList(list):
     def __init__(self, value, changed, lock):
         self._changed, self._lock = changed, lock
         super().__init__(track(item, changed, lock) for item in value)
+
+    def __deepcopy__(self, memo):
+        with self._lock:
+            result = []
+            memo[id(self)] = result
+            result.extend(deepcopy(item, memo) for item in self)
+            return result
 
     @mutation
     def __setitem__(self, key, value):
@@ -148,6 +163,13 @@ class TrackedSet(set):
     def __init__(self, value, changed, lock):
         self._changed, self._lock = changed, lock
         super().__init__(value)
+
+    def __deepcopy__(self, memo):
+        with self._lock:
+            result = set()
+            memo[id(self)] = result
+            result.update(deepcopy(item, memo) for item in self)
+            return result
 
     @mutation
     def add(self, value):

@@ -31,6 +31,9 @@ separate from correctness verification and report environment and workload with 
 packet capture, and acknowledged MongoDB drains separately; capture timing is not server performance.
 Use the same isolated service and workload for comparisons, alternate versions, and retain all samples.
 
+Scalar/default regressions live in `tests/test_autosave_validation.py`; annotation signatures
+are also checked in `tests/typing`.
+
 For native changes, run the complete suite with PYORM_NATIVE=required and off, including real MongoDB.
 Verify differential BSON ordering/type comparisons, alias/cycle copying, callback failures/mutations,
 deep nesting, malformed buffers, retries, and concurrency. With PYO3_PYTHON set to the resolved project

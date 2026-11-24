@@ -3,19 +3,33 @@
 from __future__ import annotations
 
 import inspect
+import sys
 import threading
 from collections.abc import Iterator, Sequence
 from concurrent.futures import Future
 from contextlib import contextmanager
+from copy import deepcopy
 from enum import Enum
 from functools import wraps
-from typing import TYPE_CHECKING, Any, ClassVar, Self, overload
+from types import UnionType
+from typing import (
+    TYPE_CHECKING,
+    Annotated,
+    Any,
+    ClassVar,
+    Self,
+    Union,
+    get_args,
+    get_origin,
+    get_type_hints,
+    overload,
+)
 
 from bson import ObjectId
 from pymongo import IndexModel
 
 from .exceptions import ConcurrentModificationError, ValidationError
-from .fields import MISSING, Field
+from .fields import MISSING, EmbeddedField, Field
 from .serialization import copy_bson, diff_documents, validate_bson
 from .types import BSONDocument, CacheKey, ChangeNotifier, MongoUpdate
 
@@ -36,6 +50,65 @@ def _synchronize_method(method):
     return synchronized
 
 
+def _annotation_types(annotation) -> tuple[tuple[type, ...] | None, bool]:
+    """Resolve top-level runtime types; element declarations remain explicit Fields."""
+    if annotation in (Any, object):
+        return None, True
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _annotation_types(get_args(annotation)[0])
+    if origin in (Union, UnionType):
+        types = []
+        nullable = False
+        for member in get_args(annotation):
+            member_types, member_nullable = _annotation_types(member)
+            if member_types is None:
+                return None, True
+            types.extend(member_types)
+            nullable |= member_nullable
+        return tuple(dict.fromkeys(types)), nullable
+    target = origin or annotation
+    if not isinstance(target, type):
+        raise TypeError(f"Unsupported _autosave annotation {annotation!r}; use an explicit Field")
+    return (target,), target is type(None)
+
+
+def _autosave_field(default, annotation=MISSING) -> Field[Any]:
+    if annotation is MISSING:
+        if default is MISSING or default is None:
+            types = None
+        elif isinstance(default, Enum):
+            types = (type(default),)
+        else:
+            # Tracking and BSON retain builtin scalar/container APIs, including
+            # when a template happens to contain a tracked container or subclass.
+            target = next(
+                (
+                    target
+                    for target in (dict, list, tuple, set, frozenset, str, bool, int, float, bytes)
+                    if isinstance(default, target)
+                ),
+                type(default),
+            )
+            types = (target,)
+        nullable = True  # Preserve the existing unannotated Field nullability contract.
+    else:
+        types, nullable = _annotation_types(annotation)
+        if types is not None:
+            types = tuple(target for target in types if target is not type(None)) or (type(None),)
+    if types is None:
+        return Field(default=default, nullable=nullable)
+    if len(types) > 1 and any(
+        target in (set, frozenset, tuple) or issubclass(target, Enum) for target in types
+    ):
+        raise TypeError("Union BSON restoration requires an explicit custom Field")
+    if any(issubclass(target, EmbeddedDocument) for target in types):
+        if len(types) != 1 or not issubclass(types[0], EmbeddedDocument):
+            raise TypeError("An _autosave embedded field must declare one concrete document type")
+        return EmbeddedField(types[0], default=default, nullable=nullable)
+    return Field(types[0] if len(types) == 1 else types, default=default, nullable=nullable)
+
+
 class ModelMeta(type):
     _fields: dict[str, Field[Any]]
 
@@ -43,18 +116,15 @@ class ModelMeta(type):
         mcls: type[ModelMeta], name: str, bases: tuple[type, ...], namespace: dict[str, Any]
     ) -> ModelMeta:
         fields: dict[str, Field[Any]] = {}
+        automatic = {}
         for base in bases:
             fields.update(getattr(base, "_fields", {}))
         # Retain the source project's field-list declaration as a migration aid.
         for field_name in namespace.get("_autosave", ()):
             if field_name not in fields and not isinstance(namespace.get(field_name), Field):
                 default = namespace.get(field_name, MISSING)
-                # BSON uses arrays for lists, tuples and sets; retain the declared
-                # container type so a fresh load restores the business API.
-                container_type = type(default)
-                if container_type not in (dict, list, tuple, set, frozenset):
-                    container_type = None
-                namespace[field_name] = Field(container_type, default=default)
+                automatic[field_name] = default
+                namespace[field_name] = Field(default=default)
         for attr, value in namespace.items():
             if attr in fields and not isinstance(value, Field):
                 raise TypeError(f"Inherited field {attr!r} must be overridden with Field")
@@ -75,6 +145,34 @@ class ModelMeta(type):
                 ):
                     namespace[attr] = _synchronize_method(value)
         cls = super().__new__(mcls, name, bases, namespace)
+        annotations = {
+            attr: annotation
+            for attr, annotation in namespace.get("__annotations__", {}).items()
+            if attr in automatic
+        }
+        if annotations:
+            # Resolve postponed/local annotations only at declaration time, after
+            # the class exists. Explicit descriptors remain authoritative.
+            def declaration():
+                pass
+
+            declaration.__annotations__ = annotations
+            localns = {**sys._getframe(1).f_locals, **vars(cls), name: cls}
+            try:
+                annotations = get_type_hints(
+                    declaration,
+                    globalns=vars(sys.modules[cls.__module__]),
+                    localns=localns,
+                    include_extras=True,
+                )
+            except (NameError, TypeError) as exc:
+                raise TypeError(f"Cannot resolve _autosave annotations for {name}") from exc
+        for attr, default in automatic.items():
+            field = _autosave_field(default, annotations.get(attr, MISSING))
+            setattr(cls, attr, field)
+            # ModelMeta constructs the EmbeddedDocument class that owns this field.
+            field.__set_name__(cls, attr)  # pyright: ignore[reportArgumentType]
+            fields[attr] = field
         db_names = [field.db_field for field in fields.values()]
         if len(set(db_names)) != len(db_names) or {
             "_id",
@@ -102,6 +200,17 @@ class EmbeddedDocument(metaclass=ModelMeta):
             value = values[name] if name in values else field.get_default()
             if value is not MISSING:
                 setattr(self, name, value)
+
+    def __deepcopy__(self, memo) -> Self:
+        """Clone field state, preserving Python values without copying ownership."""
+        with self._lock:
+            instance = type(self).__new__(type(self))
+            memo[id(self)] = instance
+            instance._lock = threading.RLock()
+            instance._on_change = None
+            instance._values = deepcopy(self._values, memo)
+            instance._extra = deepcopy(self._extra, memo)
+            return instance
 
     @contextmanager
     def locked(self) -> Iterator[Self]:
@@ -156,6 +265,9 @@ class Document[ID = ObjectId](EmbeddedDocument):
     _acked_seq: int
     _dirty_fields: dict[str, int]
     _hooks: dict[str, ChangeNotifier]
+
+    def __deepcopy__(self, memo) -> Self:
+        raise TypeError("Root documents cannot be copied; use EmbeddedDocument defaults")
 
     @classmethod
     def load(cls, id: ID) -> Self:

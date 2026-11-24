@@ -21,6 +21,19 @@ class Player(Document[str]):
     coins = Field(int, default=0)
 
 
+class OptionalPlayer(Document[str]):
+    _autosave = ("coins", "stats")
+    coins: int | None = None
+    stats: Stats | None = None
+
+
+def check_optional(player: OptionalPlayer) -> None:
+    assert_type(player.coins, int | None)
+    assert_type(player.stats, Stats | None)
+    player.coins = 5
+    player.stats = Stats()
+
+
 def check_player(player: Player) -> None:
     assert_type(player.stats, Stats)
     assert_type(player.explicit_stats, Stats)

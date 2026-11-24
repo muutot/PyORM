@@ -99,13 +99,19 @@ assert Pet.load(2001) is pet
 
 模型用 `Document[int]`、`Document[str]` 声明 ID 类型；省略时默认为 `ObjectId`。例如 quickstart 的 `Player` 和 `Pet` 都继承 `Document[str]`，所以 `Player.load("player-1")` 返回 `Player`，`player.id` 是 `str`，可直接赋给 `pet.owner_id: str | None`。`load`、`from_mongo`、`save`、`reload` 用 `Self` 保留子类类型；Manager、Repository、QuerySet 和 Future 也保留具体模型类型，可能不存在的查询返回 `Pet | None`。字符串/整数 ID 的模型直接构造时应传入相应的 `id`。
 
-类型提示服务于方法接口和编辑器补全，不额外引入运行时转换、`cast()` 或类型检查。空容器应声明元素类型，例如 `skills: list[str] = []`；动态字段关键字参数保持原有写法。
+方法和 ID 的类型提示服务于编辑器补全，不引入运行时转换或 `cast()`。`_autosave` 字段的类注解同时声明字段校验契约；例如 `coins: int | None = None` 允许整数和 null，拒绝字符串与 bool。空容器应声明元素类型，例如 `skills: list[str] = []`；这只校验顶层 list，逐元素校验和恢复需要显式元素字段。动态字段关键字参数保持原有写法。
 
 已有宠物执行 `self.stats.level = 5` 会自动标记所属文档的 stats 字段，并生成 `stats.level` 增量更新。嵌套对象没有独立的提交队列，由所属 `Pet` 的 Manager 统一调度，无需字典赋值或手动保存。
 
 也支持 dict/list/set 的原地修改；Manager 在绑定对象时包装容器以捕获变化。数组纯尾部追加、集合纯新增时，单个新增用索引点路径 `$set`，多个新增用 `$push` / `$each`；其他数组变化替换对应数组，字典和嵌套对象使用点路径更新。赋入普通容器时会复制容器结构，请通过实例字段继续修改，不要修改赋值前保留的原始容器。已绑定的嵌套对象不能共享给另一个字段或文档。
 
 Field 可用于类型校验、必填字段、默认工厂、枚举和数据库字段别名。`_autosave` 列表中的字段也会变成可跟踪的实例属性；其他业务属性不自动存盘。`None` 保存为 BSON null；`del self.optional_field` 生成 `$unset`。
+
+`_autosave` 未提供注解时从类默认值推断类型：`coins = 0` 校验 int，`rate = 0.0` 校验 float，`enabled = False` 校验 bool，嵌套对象内部也遵守同一规则。int/float 字段不接受 bool，float 字段不隐式接收或转换 int；需要两种数值时可声明 `amount: int | float = 0`。未注解字段保留允许 `None` 的行为，默认值为 `None` 或未声明默认值时保持宽松。显式 Field 的参数优先于类注解。
+
+`_autosave` 中的 `stats = PetStats()` 和 `EmbeddedField(PetStats, default=PetStats(...))` 会独立复制嵌套字段状态，创建新锁并移除旧跟踪绑定，保留 Python 默认值结构。复制不执行业务构造函数或字段工厂；依赖构造函数的普通业务属性时使用 `default_factory`。根 Document 不作为可复制的嵌套默认值。
+
+这项校验相对已发布的 0.2.3 收紧了 `_autosave` 标量行为，历史异型数据会在加载时抛出 `ValidationError`。升级前应修正数据或明确声明允许的联合类型；兼容旧行为的临时配置及完整规则见 [字段校验与升级说明](docs/field-validation.md)。
 
 ## 列表、字典、元组和集合字段
 
@@ -134,7 +140,7 @@ class Pet(Document):
 | `tuple` | 整体赋值、`+=`；内部可变对象的修改也跟踪 | 纯尾部扩展：单个索引 `$set`，多个 `$push` / `$each`；其他变化整体 `$set` | `tuple` |
 | `set` | `add`、`discard`、`update`、`\|=`、`&=`、`-=`、`^=` | 缓存去重后，单个索引 `$set`，多个 `$push` / `$each`；含移除整体 `$set` | `set` |
 
-`_autosave` 根据类默认值记录容器类型，解决 MongoDB 把 list、tuple、set 都保存为数组后无法区分的问题；恢复的 list/dict/set 由 ORM 内部包装，但仍支持相应 Python 容器 API。每个实例独立复制可变默认值。容器字段赋值会校验声明的类型，`set` 字段应赋集合，`tuple` 字段应赋元组；无需原地修改时，也可以直接整体赋值。
+`_autosave` 根据类注解或默认值记录容器类型，解决 MongoDB 把 list、tuple、set 都保存为数组后无法区分的问题；恢复的 list/dict/set 由 ORM 内部包装，但仍支持相应 Python 容器 API。每个实例独立复制可变默认值。容器字段赋值会校验声明的类型，`set` 字段应赋集合，`tuple` 字段应赋元组；无需原地修改时，也可以直接整体赋值。
 
 如果默认值只在业务构造函数里赋，加载时不会执行该构造函数，应使用类默认值，或显式声明 `Field(set, default_factory=set)` / `Field(tuple, default=(0, 0))`。
 
@@ -248,7 +254,7 @@ MongoORM / Repository / QuerySet 保留为底层显式数据库接口；托管�
 
 优化减少重复赋值的调度唤醒、容器转换和快照复制，并限制任务选择时的队列扫描。文档锁、缓存身份、变更代次、版本检查、增量写入和重试机制继续生效。
 
-测试日期为 2026-11-23，以下结果是同一独立 MongoDB 服务上交替 / 轮换各 5 轮的中位数。
+以下保留 2026-11-23 实现的性能结果，采样时尚未加入本轮字段校验修复。结果是同一独立 MongoDB 服务上交替 / 轮换各 5 轮的中位数；字段规则见 [字段校验与升级说明](docs/field-validation.md)。
 
 | 测试环境 | 配置 |
 | --- | --- |
@@ -259,7 +265,7 @@ MongoORM / Repository / QuerySet 保留为底层显式数据库接口；托管�
 
 机器配置与驱动版本为同机补录信息；完整来源、线程与队列参数、计时口径见 [测试环境说明](docs/benchmark-environment.md)。快照计时排除网络，排空计时包括快照、调度和数据库确认；Python 分配峰值不等于整个进程内存。
 
-同一当前版本可选择 Python 或 Rust 后端。`PYORM_NATIVE=off` 强制 Python，`PYORM_NATIVE=required` 强制 Rust 并要求扩展可用。默认 `auto` 在扩展可用时使用相同 Rust 后端，否则使用 Python。以下对比来自同轮的 [Python 样本](docs/benchmarks/performance-native-python.json) 与 [Rust 样本](docs/benchmarks/performance-native-rust.json)。
+当时同一实现可选择 Python 或 Rust 后端。`PYORM_NATIVE=off` 强制 Python，`PYORM_NATIVE=required` 强制 Rust 并要求扩展可用。默认 `auto` 在扩展可用时使用相同 Rust 后端，否则使用 Python。以下对比来自同轮的 [Python 样本](docs/benchmarks/performance-native-python.json) 与 [Rust 样本](docs/benchmarks/performance-native-rust.json)。
 
 容器分别追加 2 个列表元素、修改一个字典值、新增一个集合成员；快照每轮捕获 5 次。
 

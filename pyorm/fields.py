@@ -101,10 +101,23 @@ class Field[T = Any]:
             return
         if self.python_type is not None and (
             not isinstance(value, self.python_type)
-            or (self.python_type in (int, float) and isinstance(value, bool))
+            or (
+                isinstance(value, bool)
+                and (
+                    self.python_type in (int, float)
+                    or (
+                        isinstance(self.python_type, tuple)
+                        and not any(
+                            target not in (int, float) and isinstance(value, target)
+                            for target in self.python_type
+                        )
+                    )
+                )
+            )
         ):
             raise ValidationError(f"Field {self.name!r} must be {self.python_type!r}")
-        if self.validator is not None and self.validator(value) is False:
+        # Runtime validation above establishes the generic type at this BSON boundary.
+        if self.validator is not None and self.validator(value) is False:  # pyright: ignore[reportArgumentType]
             raise ValidationError(f"Field {self.name!r} failed validation")
 
     def to_mongo(self, value: T):
